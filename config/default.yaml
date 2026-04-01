@@ -1,0 +1,68 @@
+paths:
+  offices_csv: data/input/offices.csv
+  scenarios_dir: data/input/scenarios
+  output_root: outputs
+
+scenario_names:
+  - weekday_midnight
+  - weekday_6am
+  - weekday_noon
+  - weekday_6pm
+  - weekend_midnight
+  - weekend_6am
+  - weekend_noon
+  - weekend_6pm
+
+k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+sla_minutes: 120
+
+scenario_weight_profiles:
+  balanced_default:
+    weekday_midnight: 0.10
+    weekday_6am: 0.15
+    weekday_noon: 0.15
+    weekday_6pm: 0.20
+    weekend_midnight: 0.08
+    weekend_6am: 0.08
+    weekend_noon: 0.12
+    weekend_6pm: 0.12
+  tier1_heavy:
+    weekday_midnight: 0.08
+    weekday_6am: 0.15
+    weekday_noon: 0.17
+    weekday_6pm: 0.22
+    weekend_midnight: 0.07
+    weekend_6am: 0.07
+    weekend_noon: 0.12
+    weekend_6pm: 0.12
+  weekday_peak_heavy:
+    weekday_midnight: 0.06
+    weekday_6am: 0.20
+    weekday_noon: 0.16
+    weekday_6pm: 0.24
+    weekend_midnight: 0.06
+    weekend_6am: 0.06
+    weekend_noon: 0.11
+    weekend_6pm: 0.11
+active_scenario_profile: balanced_default
+
+tier_weights:
+  1: 10
+  2: 6
+  3: 3
+  4: 1
+
+solver:
+  time_limit_seconds: 30
+  random_seed: 42
+  num_workers: 8
+  objective_scale: 100
+
+recommendation:
+  plateau_threshold_pct: 5.0
+  plateau_consecutive_steps: 2
+  tier2_guardrail_pct: 2.0
+
+artifacts:
+  persist_preprocessed_csv: true
+  generate_plots: true

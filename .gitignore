@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.coverage
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+outputs/*
+!outputs/.gitkeep
+data/input/*
+!data/input/.gitkeep
+!data/input/scenarios/
+data/input/scenarios/*
+!data/input/scenarios/.gitkeep
+.DS_Store

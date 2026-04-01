@@ -1,0 +1,112 @@
+# Warm Spare Optimization Implementation Plan
+
+## Summary
+- Build a Python 3.11 CLI application that reads a canonical office list plus 8 supplied traffic matrices, validates and normalizes the data, solves the constrained weighted p-median for each `k` in `3..15`, evaluates each solution, and produces reports, charts, and a rule-based final recommendation.
+- V1 does not collect routes or call external APIs. The only inputs are the office file and the 8 scenario matrices.
+- The first implementation artifact in the repo should be [`IMPLEMENTATION_PLAN.md`](/Users/danny/Projects/Work/warm-spare-analysis/IMPLEMENTATION_PLAN.md), containing this exact plan.
+
+## Interfaces
+- Inputs:
+  - `data/input/offices.csv` with `office_id,name,latitude,longitude,tier`
+  - `data/input/scenarios/<scenario>.csv` for 8 configured scenario names; each file is a square matrix with office IDs in the header row and first column
+- Config:
+  - `config/default.yaml` with `k_values`, `sla_minutes`, tier weights, named scenario-weight profiles, active weight profile, solver settings, reporting thresholds, and output paths
+- CLI:
+  - `warm-spare validate`
+  - `warm-spare preprocess`
+  - `warm-spare optimize`
+  - `warm-spare report`
+  - `warm-spare run`
+- Outputs per run under `outputs/<run_id>/`:
+  - `validation_report.md`
+  - `office_feasibility.csv`
+  - `metrics_by_k.csv`
+  - `selected_sites_by_k.csv`
+  - `assignments_k_<k>.csv`
+  - `recommendation.md`
+  - PNG charts for objective, tier averages, worst-case drive, and assignment stability
+
+## Implementation Changes
+- Project structure:
+  - Create `pyproject.toml`, `README.md`, `.gitignore`, `config/default.yaml`
+  - Create `src/warm_spare/{models,config,io,preprocess,optimize,evaluate,recommend,reporting,plotting,cli}.py`
+  - Create `tests/{test_validation,test_preprocess,test_optimize,test_evaluate,test_recommend,test_cli_smoke}.py`
+- Canonical ordering:
+  - Use `office_id` from `offices.csv` as the only canonical index
+  - Reorder every scenario matrix to this office order after validation
+  - Persist canonical order into all downstream outputs and mention it explicitly in `validation_report.md`
+  - Fail validation if row labels differ from column labels, if either differs from office IDs, or if duplicates exist anywhere in the matrix labels
+- Validation and preprocessing:
+  - Validate unique office IDs, valid tiers `1..4`, numeric nonnegative travel times, exact scenario inventory, and no NaNs
+  - If any diagonal entry is nonzero, reset it to `0` and record scenario name plus correction count in the validation report
+  - If any scenario weight is negative, fail validation
+  - If scenario weights do not sum to `1` within tolerance, normalize them and record the original and normalized weights as a warning
+  - For each scenario, record `min`, `median`, `p95`, `max`, and mean absolute symmetry deviation before symmetrization
+  - Symmetrize each matrix with `(D[i,j] + D[j,i]) / 2`, then compute `D_avg` from the active scenario-weight profile and `D_max` as the elementwise max across scenarios
+- Global feasibility precheck:
+  - Before solving any `k`, compute the feasible-assignment mask `D_max <= sla_minutes`
+  - For each office, compute `feasible_candidate_count`, `min_dmax`, and `min_davg`
+  - If any office has zero feasible candidates, stop the study immediately, mark the dataset globally infeasible, and report the offending offices in both terminal output and `validation_report.md`
+  - Emit `office_feasibility.csv` with one row per office for diagnostics
+- Optimization:
+  - Use OR-Tools CP-SAT in v1 with boolean `x[j]` and `y[i,j]`
+  - Add constraints for exact `k`, exactly one assignment per office, and `y[i,j] <= x[j]`
+  - Hard-disable infeasible assignments using the precomputed mask
+  - Solve independently for each `k` without warm starts in v1
+  - Record `solver_status`, `solve_time_seconds`, objective value, selected sites, and assignments for every attempted `k`
+  - If a specific `k` is infeasible, continue to the next `k`; only the global precheck aborts the full run
+- Evaluation and reporting:
+  - For each `k`, compute weighted objective, average drive time overall and by tier, worst assigned `D_avg` by tier, worst assigned `D_max` overall, SLA violations, load counts per spare, site persistence from `k-1`, and office reassignment count from `k-1`
+  - `metrics_by_k.csv` must include:
+    - `k`, `solver_status`, `solve_time_seconds`, `objective`
+    - `objective_improvement_pct_from_prev_k`
+    - `tier1_avg_drive`, `tier2_avg_drive`, `tier3_avg_drive`, `tier4_avg_drive`
+    - `tier1_worst_drive`, `tier2_worst_drive`, `overall_worst_drive`, `max_assigned_dmax`
+    - `tier1_improvement_pct_from_prev_k`, `tier2_improvement_pct_from_prev_k`
+    - `sla_violations`, `selected_site_count`, `avg_load_per_spare`, `max_load_per_spare`
+    - `site_overlap_with_prev_k`, `offices_reassigned_from_prev_k`
+  - `validation_report.md` must include scenario inventory, office count, canonical ordering used, corrections applied, normalized weight profile, per-scenario stats, symmetry deviation stats, and feasibility diagnostics
+- Recommendation logic:
+  - Separate optimization from recommendation explicitly in reporting: optimization finds the best solution for each `k`; recommendation applies business rules across those optimal points
+  - Recommend the smallest feasible `k` where both objective improvement and Tier 1 average-time improvement are below `5%` for two consecutive increments
+  - Guardrail: do not recommend that `k` if Tier 2 average drive is more than `2%` worse than the next feasible `k`
+  - If no `k` passes that rule, choose the strongest knee in the objective curve, tie-breaking to smaller `k`
+  - `recommendation.md` must include the chosen `k`, the top two alternatives, the exact rule that selected it, the relevant Tier 1 and Tier 2 tradeoffs, and any infeasible `k` values
+
+## Test Plan
+- Validation:
+  - duplicate office IDs
+  - missing or extra scenario files
+  - matrix label mismatch
+  - duplicate row or column labels
+  - NaN or negative drive times
+  - invalid tiers
+  - nonzero diagonal correction reporting
+  - weight normalization and negative-weight failure
+- Preprocessing:
+  - canonical reorder correctness
+  - symmetrization correctness
+  - `D_avg` computation from normalized weights
+  - `D_max` computation
+  - feasibility mask correctness
+- Optimization:
+  - globally infeasible dataset fails before `k` loop
+  - feasible synthetic dataset returns known optimum
+  - infeasible single-`k` run is recorded without aborting later `k`
+  - SLA mask blocks illegal assignments
+  - objective is nonincreasing as feasible `k` grows on synthetic fixtures
+- Evaluation and recommendation:
+  - tier metrics and worst-case metrics are correct
+  - assignment stability metrics are correct
+  - `metrics_by_k.csv` schema is complete
+  - recommendation selects the expected `k` on synthetic diminishing-returns fixtures
+  - Tier 2 guardrail blocks an otherwise-eligible recommendation
+- CLI smoke:
+  - `warm-spare run` on a small fixture dataset produces all required output files
+
+## Assumptions and Defaults
+- Default tier weights follow the PRD: Tier 1 `10`, Tier 2 `6`, Tier 3 `3`, Tier 4 `1`
+- `config/default.yaml` will support named scenario-weight profiles from day one, with one active default profile and at least `balanced_default`, `tier1_heavy`, and `weekday_peak_heavy` placeholders
+- Default active profile is the balanced weekday-biased profile from the earlier plan, normalized automatically if edited incorrectly
+- SLA enforcement is based on symmetrized `D_max`
+- No geospatial mapping stack beyond simple latitude/longitude plotting is included in v1

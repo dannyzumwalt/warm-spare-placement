@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warm-spare"
+version = "0.1.0"
+description = "Warm spare placement optimization for wire centers"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.2",
+  "ortools>=9.9",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+plotting = [
+  "matplotlib>=3.8",
+]
+
+[project.scripts]
+warm-spare = "warm_spare.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

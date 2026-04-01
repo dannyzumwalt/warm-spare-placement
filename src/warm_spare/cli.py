@@ -29,9 +29,24 @@ VALIDATE_COMMANDS = {"validate", *PREPROCESS_COMMANDS}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="warm-spare")
-    parser.add_argument("command", choices=["validate", "preprocess", "optimize", "report", "run"])
-    parser.add_argument("--config", default="config/default.yaml")
+    parser = argparse.ArgumentParser(
+        prog="warm-spare",
+        description="Validate inputs, preprocess matrices, solve warm spare placement, and generate reports.",
+        epilog=(
+            "Commands: validate=validation only; preprocess=validation plus preprocessing artifacts; "
+            "optimize/report/run=full end-to-end analysis. Select a config with --config."
+        ),
+    )
+    parser.add_argument(
+        "command",
+        choices=["validate", "preprocess", "optimize", "report", "run"],
+        help="Pipeline mode to execute.",
+    )
+    parser.add_argument(
+        "--config",
+        default="config/default.yaml",
+        help="Path to the YAML config file. Defaults to config/default.yaml.",
+    )
     return parser
 
 

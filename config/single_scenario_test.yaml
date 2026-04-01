@@ -1,0 +1,37 @@
+paths:
+  offices_csv: data/input/offices.csv
+  scenarios_dir: data/input/scenarios
+  output_root: outputs
+
+scenario_names:
+  - static_average
+
+k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+sla_minutes: 120
+
+scenario_weight_profiles:
+  single_static_average:
+    static_average: 1.0
+
+active_scenario_profile: single_static_average
+
+tier_weights:
+  1: 10
+  2: 6
+  3: 3
+  4: 1
+
+solver:
+  time_limit_seconds: 30
+  random_seed: 42
+  num_workers: 8
+  objective_scale: 100
+
+recommendation:
+  plateau_threshold_pct: 5.0
+  plateau_consecutive_steps: 2
+  tier2_guardrail_pct: 2.0
+
+artifacts:
+  persist_preprocessed_csv: true
+  generate_plots: true

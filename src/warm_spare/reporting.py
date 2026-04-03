@@ -825,7 +825,7 @@ def _methodology_section_lines(
         "- Directional office-to-spare and spare-to-office travel times are retained for diagnostics, while round-trip matrices are used for optimization and SLA screening.",
         "",
         "### How travel time and feasibility were handled",
-        "For each office-candidate pair, the analysis uses round-trip travel time as the optimization cost because the operational question is how quickly a spare can get to the failed site and return. The preprocessing step also keeps directional travel times so asymmetric traffic patterns can still be reviewed instead of being hidden by a symmetric average.",
+        "For each office-candidate pair, the analysis uses round-trip travel time as the optimization cost because the operational planning question is how quickly a technician can reach the spare site and return to the failed site with the spare equipment. In some cases, a technician may instead be dispatched directly to a spare site and then on to the failed site without first being sent to troubleshoot at the failed location, but the round-trip measure remains the planning proxy used for this analysis. The preprocessing step also keeps directional travel times so asymmetric traffic patterns can still be reviewed instead of being hidden by a symmetric average.",
         "",
         "Pairs are marked infeasible before the solver runs if they violate the configured one-way or round-trip SLA threshold. If any office has no feasible candidate spare after that precheck, the analysis stops and reports the dataset as globally infeasible.",
         "",
@@ -860,6 +860,12 @@ def _market_display_name(preprocess: PreprocessResult, output_dir: Path) -> str:
         market_id = resolved_config.get("market_id")
         if market_id:
             return str(market_id).replace("_", " ").title()
+        inferred_market_id = _infer_market_id_from_config(resolved_config)
+        if inferred_market_id:
+            market_label = _market_label_from_market_id(inferred_market_id)
+            if market_label:
+                return market_label
+            return inferred_market_id.replace("_", " ").title()
     return "Market"
 
 
@@ -876,6 +882,41 @@ def _load_resolved_config(output_dir: Path) -> dict[str, object]:
     except Exception:
         resolved_config = {}
     return resolved_config if isinstance(resolved_config, dict) else {}
+
+
+def _infer_market_id_from_config(resolved_config: dict[str, object]) -> str | None:
+    paths = resolved_config.get("paths")
+    if not isinstance(paths, dict):
+        return None
+
+    offices_csv = paths.get("offices_csv")
+    if isinstance(offices_csv, str):
+        stem = Path(offices_csv).stem
+        if stem.endswith("_offices"):
+            return stem[: -len("_offices")]
+
+    scenarios_dir = paths.get("scenarios_dir")
+    if isinstance(scenarios_dir, str):
+        parent_name = Path(scenarios_dir).parent.name
+        if "_" in parent_name:
+            suffix = parent_name.rsplit("_", 1)[-1]
+            if suffix:
+                return suffix
+    return None
+
+
+def _market_label_from_market_id(market_id: str) -> str | None:
+    market_path = Path("config") / "markets" / f"{market_id}.yaml"
+    if not market_path.exists():
+        return None
+    try:
+        raw = yaml.safe_load(market_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    label = raw.get("label")
+    return str(label) if label else None
 
 
 def _markdown_table(frame) -> str:

@@ -171,7 +171,10 @@ def write_recommendation_report(
     spare_detail_maps: list[SpareSiteMapDetail] | None = None,
     map_warnings: list[str] | None = None,
 ) -> Path:
+    market_display_name = _market_display_name(preprocess, output_dir)
+    market_slug = _market_slug(preprocess, output_dir)
     path = output_dir / "recommendation.md"
+    market_path = output_dir / f"recommendation_{market_slug}.md"
     feasible_metrics = metrics.loc[metrics["solver_status"].isin(FEASIBLE_STATUSES)].sort_values("k").reset_index(drop=True)
     results_by_k = {result.k: result for result in optimization_results}
     selected_result = results_by_k.get(recommendation.recommended_k) if recommendation.recommended_k is not None else None
@@ -186,7 +189,12 @@ def write_recommendation_report(
         recommended_sites_table.to_csv(output_dir / "recommended_selected_sites.csv", index=False)
 
     if short_report:
-        content = _short_recommendation_content(recommendation, feasible_metrics, selected_row)
+        content = _short_recommendation_content(
+            recommendation,
+            feasible_metrics,
+            selected_row,
+            market_display_name,
+        )
     else:
         content = _full_recommendation_content(
             output_dir=output_dir,
@@ -195,12 +203,14 @@ def write_recommendation_report(
             selected_row=selected_row,
             selected_result=selected_result,
             selected_site_table=recommended_sites_table,
+            preprocess=preprocess,
             map_path=map_path,
             spare_detail_maps=spare_detail_maps or [],
             map_warnings=map_warnings or [],
         )
     path.write_text(content + "\n", encoding="utf-8")
-    write_recommendation_html(output_dir, content, spare_detail_maps or [])
+    market_path.write_text(content + "\n", encoding="utf-8")
+    write_recommendation_html(output_dir, content, spare_detail_maps or [], market_display_name, market_slug)
     return path
 
 
@@ -208,6 +218,8 @@ def write_recommendation_html(
     output_dir: Path,
     markdown_content: str,
     spare_detail_maps: list[SpareSiteMapDetail],
+    market_display_name: str,
+    market_slug: str,
 ) -> Path:
     body = _markdown_to_html(markdown_content, output_dir)
     detail_html = _spare_detail_maps_html(output_dir, spare_detail_maps)
@@ -218,7 +230,7 @@ def write_recommendation_html(
             "<head>",
             "<meta charset=\"utf-8\">",
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">",
-            "<title>Warm Spare Recommendation</title>",
+            f"<title>{html.escape(market_display_name)} Warm Spare Recommendation</title>",
             "<style>",
             "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; background: #f7f7f5; color: #1f2933; }",
             ".page { max-width: 1100px; margin: 0 auto; padding: 40px 32px 64px; }",
@@ -254,7 +266,9 @@ def write_recommendation_html(
         ]
     )
     path = output_dir / "recommendation.html"
+    market_path = output_dir / f"recommendation_{market_slug}.html"
     path.write_text(html_content + "\n", encoding="utf-8")
+    market_path.write_text(html_content + "\n", encoding="utf-8")
     return path
 
 
@@ -262,6 +276,7 @@ def _short_recommendation_content(
     recommendation: RecommendationResult,
     feasible_metrics: pd.DataFrame,
     selected_row: pd.Series | None,
+    market_display_name: str,
 ) -> str:
     alternative_lines = [f"- k={value}" for value in recommendation.alternatives] or ["- None"]
     note_lines = [f"- {note}" for note in recommendation.notes] or ["- None"]
@@ -278,7 +293,7 @@ def _short_recommendation_content(
     anomalous_lines = [f"- k={value}" for value in anomalous] or ["- None"]
     return "\n".join(
         [
-            "# Recommendation",
+            f"# {market_display_name} Recommendation",
             "",
             "Optimization finds the best solution for each k. This recommendation applies business rules on top of those optimal per-k solutions.",
             "",
@@ -448,12 +463,19 @@ def _full_recommendation_content(
     selected_row: pd.Series | None,
     selected_result: OptimizationResult | None,
     selected_site_table: pd.DataFrame | None,
+    preprocess: PreprocessResult,
     map_path: Path | None,
     spare_detail_maps: list[SpareSiteMapDetail],
     map_warnings: list[str],
 ) -> str:
+    market_display_name = _market_display_name(preprocess, output_dir)
     if selected_row is None or selected_result is None or selected_result.assignments is None:
-        return _short_recommendation_content(recommendation, feasible_metrics, selected_row)
+        return _short_recommendation_content(
+            recommendation,
+            feasible_metrics,
+            selected_row,
+            market_display_name,
+        )
 
     lower_neighbor = _neighbor_row(feasible_metrics, int(selected_row["k"]), direction=-1)
     higher_neighbor = _neighbor_row(feasible_metrics, int(selected_row["k"]), direction=1)
@@ -484,12 +506,13 @@ def _full_recommendation_content(
 
     return "\n".join(
         [
-            "# Market Recommendation Report",
+            f"# {market_display_name} Market Recommendation Report",
             "",
             "## Executive Summary",
-            "This report recommends a warm spare site count and the specific office IDs to use for this market. "
+            f"This report recommends a warm spare site count and the specific office IDs to use for {market_display_name}. "
             "The model tests each candidate site count, finds the best placement for that count, and then compares the tradeoff between better coverage and adding more spare sites.",
             "",
+            f"- Market: `{market_display_name}`",
             *summary_bullets,
             f"- Rule used for recommendation: `{recommendation.chosen_rule}`",
             f"- Decision request: {decision_request}",
@@ -746,6 +769,29 @@ def _git_commit_hash() -> str | None:
     except Exception:
         return None
     return output.strip() or None
+
+
+def _market_display_name(preprocess: PreprocessResult, output_dir: Path) -> str:
+    del preprocess
+    try:
+        resolved_config = yaml.safe_load((output_dir / "resolved_config.yaml").read_text(encoding="utf-8"))
+    except Exception:
+        resolved_config = {}
+    if isinstance(resolved_config, dict):
+        label = resolved_config.get("market_label")
+        if label:
+            return str(label)
+        market_id = resolved_config.get("market_id")
+        if market_id:
+            return str(market_id).replace("_", " ").title()
+    return "Market"
+
+
+def _market_slug(preprocess: PreprocessResult, output_dir: Path) -> str:
+    display_name = _market_display_name(preprocess, output_dir).strip().lower()
+    slug = "".join(ch if ch.isalnum() else "_" for ch in display_name)
+    slug = "_".join(part for part in slug.split("_") if part)
+    return slug or "market"
 
 
 def _markdown_table(frame) -> str:

@@ -218,5 +218,7 @@ Depending on mode, run directories may include:
 - `recommended_sites_map.png`
 - `spare_detail_map_<office_id>.png`
 - `recommendation.md`
+- `recommendation_<market>.md`
 - `recommendation.html`
+- `recommendation_<market>.html`
 - plot PNGs

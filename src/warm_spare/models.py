@@ -99,6 +99,8 @@ class AppConfig:
     recommendation: RecommendationConfig = field(default_factory=RecommendationConfig)
     artifacts: ArtifactConfig = field(default_factory=ArtifactConfig)
     matrix_builder: MatrixBuilderConfig | None = None
+    market_id: str | None = None
+    market_label: str | None = None
 
     def active_weights(self) -> dict[str, float]:
         return dict(self.scenario_weight_profiles[self.active_scenario_profile])

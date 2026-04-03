@@ -761,6 +761,8 @@ def _write_generated_analysis_config(
     office_coordinates_path: Path,
 ) -> Path:
     config_dict = base_config.to_dict()
+    config_dict["market_id"] = market.market_id
+    config_dict["market_label"] = market.label
     config_dict["paths"]["offices_csv"] = market.offices_csv
     config_dict["paths"]["scenarios_dir"] = str(output_dir / "scenarios")
     config_dict["paths"]["output_root"] = market.output_root

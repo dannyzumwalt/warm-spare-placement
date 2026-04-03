@@ -95,6 +95,8 @@ def load_config(config_path: str | Path) -> AppConfig:
         recommendation=recommendation,
         artifacts=artifacts,
         matrix_builder=matrix_builder,
+        market_id=str(raw["market_id"]) if raw.get("market_id") is not None else None,
+        market_label=str(raw["market_label"]) if raw.get("market_label") is not None else None,
     )
     validate_config(config)
     return config

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -37,6 +37,52 @@ class ArtifactConfig:
 
 
 @dataclass(slots=True)
+class RetryPolicyConfig:
+    max_attempts: int = 3
+    initial_backoff_seconds: float = 1.0
+    max_backoff_seconds: float = 30.0
+    jitter_seconds: float = 0.5
+
+
+@dataclass(slots=True)
+class BatchLimitsConfig:
+    max_origins_per_request: int = 25
+    max_destinations_per_request: int = 25
+    max_elements_per_request: int = 100
+
+
+@dataclass(slots=True)
+class AnomalyConfig:
+    pair_abs_minutes: float = 30.0
+    pair_pct_of_static: float = 0.5
+    pair_zscore_threshold: float = 3.0
+    scenario_pair_fraction: float = 0.05
+    scenario_tier12_pair_fraction: float = 0.02
+    quarantine_by_default: bool = True
+
+
+@dataclass(slots=True)
+class ScenarioDefinition:
+    id: str
+    departure_policy: Literal["none", "now"] = "none"
+    traffic_model: str | None = None
+    mode: str = "driving"
+
+
+@dataclass(slots=True)
+class MatrixBuilderConfig:
+    provider: str = "google_distance_matrix"
+    api_key_env_var: str = "GOOGLE_MAPS_API_KEY"
+    cache_db_path: str = "outputs/matrix_cache.sqlite"
+    eligible_spare_tiers: list[int] = field(default_factory=lambda: [1, 2, 3])
+    accepted_anomaly_scenarios: list[str] = field(default_factory=list)
+    retry_policy: RetryPolicyConfig = field(default_factory=RetryPolicyConfig)
+    batch_limits: BatchLimitsConfig = field(default_factory=BatchLimitsConfig)
+    anomaly: AnomalyConfig = field(default_factory=AnomalyConfig)
+    scenarios: list[ScenarioDefinition] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class AppConfig:
     paths: PathsConfig
     scenario_names: list[str]
@@ -45,12 +91,26 @@ class AppConfig:
     scenario_weight_profiles: dict[str, dict[str, float]]
     active_scenario_profile: str
     tier_weights: dict[int, float]
+    candidate_tiers: list[int] = field(default_factory=lambda: [1, 2, 3])
     solver: SolverConfig = field(default_factory=SolverConfig)
     recommendation: RecommendationConfig = field(default_factory=RecommendationConfig)
     artifacts: ArtifactConfig = field(default_factory=ArtifactConfig)
+    matrix_builder: MatrixBuilderConfig | None = None
 
     def active_weights(self) -> dict[str, float]:
         return dict(self.scenario_weight_profiles[self.active_scenario_profile])
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class MarketConfig:
+    market_id: str
+    label: str
+    offices_csv: str
+    output_root: str
+    eligible_spare_tiers: list[int] = field(default_factory=lambda: [1, 2, 3])
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -69,7 +129,7 @@ class ScenarioStats:
     median: float
     p95: float
     maximum: float
-    mean_abs_symmetry_deviation: float
+    mean_abs_directional_gap: float
     corrected_diagonal_entries: int
 
 
@@ -77,7 +137,9 @@ class ScenarioStats:
 class ValidationResult:
     offices: pd.DataFrame
     scenario_matrices: dict[str, pd.DataFrame]
+    directional_matrices: dict[str, dict[str, pd.DataFrame]]
     canonical_order: list[str]
+    candidate_order: list[str]
     normalized_weights: dict[str, float]
     original_weights: dict[str, float]
     warnings: list[ValidationWarning]
@@ -88,7 +150,8 @@ class ValidationResult:
 class PreprocessResult:
     offices: pd.DataFrame
     canonical_order: list[str]
-    symmetrized_matrices: dict[str, pd.DataFrame]
+    candidate_order: list[str]
+    directional_matrices: dict[str, dict[str, pd.DataFrame]]
     d_avg: pd.DataFrame
     d_max: pd.DataFrame
     feasibility_mask: pd.DataFrame
@@ -161,3 +224,28 @@ class PipelineArtifacts:
     metrics: pd.DataFrame
     recommendation: RecommendationResult
     output_dir: Path
+
+
+@dataclass(slots=True)
+class DriveTimeElement:
+    origin_id: str
+    destination_id: str
+    duration_minutes: float
+    status: str
+    raw_duration_text: str | None
+    normalized_origin: str | None
+    normalized_destination: str | None
+
+
+@dataclass(slots=True)
+class MatrixBuildResult:
+    output_dir: Path
+    analysis_config_path: Path
+    unresolved_pairs_path: Path | None
+    quarantined_pairs_path: Path | None
+    quarantine_manifest_path: Path | None
+    build_report_path: Path
+    build_manifest_path: Path
+    quarantined_scenarios: list[str]
+    unresolved_pair_count: int
+    success: bool

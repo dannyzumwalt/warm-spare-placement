@@ -26,22 +26,24 @@ def solve_all_k(config: AppConfig, preprocess: PreprocessResult) -> list[Optimiz
 
 def solve_for_k(config: AppConfig, preprocess: PreprocessResult, k: int) -> OptimizationResult:
     office_ids = preprocess.canonical_order
+    candidate_ids = preprocess.candidate_order
     office_count = len(office_ids)
+    candidate_count = len(candidate_ids)
     tier_lookup = preprocess.offices.set_index("office_id")["tier"].to_dict()
     tier_weights = {office_id: config.tier_weights[int(tier_lookup[office_id])] for office_id in office_ids}
 
     model = cp_model.CpModel()
-    x = {j: model.NewBoolVar(f"x_{j}") for j in range(office_count)}
+    x = {j: model.NewBoolVar(f"x_{j}") for j in range(candidate_count)}
     y = {
         (i, j): model.NewBoolVar(f"y_{i}_{j}")
         for i in range(office_count)
-        for j in range(office_count)
+        for j in range(candidate_count)
     }
 
     scale = int(config.solver.objective_scale)
     objective_terms = []
     for i, office_id in enumerate(office_ids):
-        for j, spare_id in enumerate(office_ids):
+        for j, spare_id in enumerate(candidate_ids):
             feasible = int(preprocess.feasibility_mask.loc[office_id, spare_id])
             if feasible == 0:
                 model.Add(y[(i, j)] == 0)
@@ -49,7 +51,7 @@ def solve_for_k(config: AppConfig, preprocess: PreprocessResult, k: int) -> Opti
             cost = int(round(preprocess.d_avg.loc[office_id, spare_id] * tier_weights[office_id] * scale))
             objective_terms.append(cost * y[(i, j)])
             model.Add(y[(i, j)] <= x[j])
-        model.Add(sum(y[(i, j)] for j in range(office_count)) == 1)
+        model.Add(sum(y[(i, j)] for j in range(candidate_count)) == 1)
 
     model.Add(sum(x.values()) == k)
     model.Minimize(sum(objective_terms))
@@ -92,13 +94,13 @@ def solve_for_k(config: AppConfig, preprocess: PreprocessResult, k: int) -> Opti
             had_incumbent=tracker.seen_solution,
         )
 
-    selected_indices = [j for j in range(office_count) if solver.Value(x[j]) == 1]
-    selected_sites = [office_ids[j] for j in selected_indices]
+    selected_indices = [j for j in range(candidate_count) if solver.Value(x[j]) == 1]
+    selected_sites = [candidate_ids[j] for j in selected_indices]
     records = []
     assignment_map: dict[str, str] = {}
     for i, office_id in enumerate(office_ids):
-        assigned_j = next(j for j in range(office_count) if solver.Value(y[(i, j)]) == 1)
-        spare_id = office_ids[assigned_j]
+        assigned_j = next(j for j in range(candidate_count) if solver.Value(y[(i, j)]) == 1)
+        spare_id = candidate_ids[assigned_j]
         assignment_map[office_id] = spare_id
         records.append(
             {

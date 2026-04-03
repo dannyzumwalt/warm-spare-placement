@@ -18,7 +18,7 @@ from warm_spare.models import (
     ValidationResult,
 )
 
-PACKAGE_NAMES = ["numpy", "pandas", "ortools", "PyYAML", "matplotlib"]
+PACKAGE_NAMES = ["numpy", "pandas", "ortools", "PyYAML", "matplotlib", "googlemaps"]
 
 
 def create_output_dir(output_root: str, command_name: str) -> Path:
@@ -71,14 +71,13 @@ def write_validation_report(
     scenario_stats_lines = []
     for stats in validation.scenario_stats:
         scenario_stats_lines.append(
-            "| {name} | {minimum:.2f} | {median:.2f} | {p95:.2f} | {maximum:.2f} | {sym:.2f} | {diag} |".format(
+            "| {name} | {minimum:.2f} | {median:.2f} | {p95:.2f} | {maximum:.2f} | {gap:.2f} |".format(
                 name=stats.scenario_name,
                 minimum=stats.minimum,
                 median=stats.median,
                 p95=stats.p95,
                 maximum=stats.maximum,
-                sym=stats.mean_abs_symmetry_deviation,
-                diag=stats.corrected_diagonal_entries,
+                gap=stats.mean_abs_directional_gap,
             )
         )
     warning_lines = [f"- `{warning.category}`: {warning.message}" for warning in validation.warnings] or ["- None"]
@@ -90,9 +89,11 @@ def write_validation_report(
             "",
             "## Summary",
             f"- Office count: {len(validation.canonical_order)}",
+            f"- Candidate office count: {len(validation.candidate_order)}",
             f"- Scenario inventory: {', '.join(config.scenario_names)}",
             f"- Active scenario profile: {config.active_scenario_profile}",
-            f"- Canonical ordering used: {', '.join(validation.canonical_order)}",
+            f"- Canonical office ordering: {', '.join(validation.canonical_order)}",
+            f"- Canonical candidate ordering: {', '.join(validation.candidate_order)}",
             "",
             "## Corrections and Warnings",
             *warning_lines,
@@ -102,8 +103,8 @@ def write_validation_report(
             f"- Normalized weights: `{validation.normalized_weights}`",
             "",
             "## Scenario Stats",
-            "| Scenario | Min | Median | P95 | Max | Mean Abs Symmetry Deviation | Corrected Diagonal Entries |",
-            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            "| Scenario | Min | Median | P95 | Max | Mean Abs Directional Gap |",
+            "| --- | ---: | ---: | ---: | ---: | ---: |",
             *scenario_stats_lines,
             "",
             "## Feasibility Diagnostics",
@@ -172,9 +173,9 @@ def write_recommendation_report(
         selected_lines = [
             f"- Recommended k: {int(selected_row['k'])}",
             f"- Objective: {selected_row['objective']:.2f}",
-            f"- Tier 1 average drive: {selected_row['tier1_avg_drive']:.2f}",
-            f"- Tier 2 average drive: {selected_row['tier2_avg_drive']:.2f}",
-            f"- Overall worst-case drive: {selected_row['overall_worst_case_drive']:.2f}",
+            f"- Tier 1 average round trip: {selected_row['tier1_avg_drive']:.2f}",
+            f"- Tier 2 average round trip: {selected_row['tier2_avg_drive']:.2f}",
+            f"- Overall worst-case round trip: {selected_row['overall_worst_case_drive']:.2f}",
         ]
     anomalous = metrics.loc[metrics["monotonicity_anomaly_flag"] == True, "k"].tolist()
     anomalous_lines = [f"- k={value}" for value in anomalous] or ["- None"]

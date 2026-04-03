@@ -1,6 +1,6 @@
 # Warm Spare Optimization
 
-CLI application for validating wire center travel-time inputs, solving the constrained weighted p-median problem for warm spare placement, and generating reports, charts, and recommendations.
+CLI application for building drive-time datasets from office addresses, validating round-trip scenario matrices, solving the constrained warm-spare placement problem, and generating reports and recommendations.
 
 ## Quick start
 
@@ -8,145 +8,168 @@ CLI application for validating wire center travel-time inputs, solving the const
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e '.[plotting]'
-warm-spare run --config config/default.yaml
 ```
 
-## Input layout
+## Core workflows
 
-- `data/input/offices.csv`
-- `data/input/scenarios/<scenario>.csv`
+### 1. Build matrices from addresses
 
-The scenario filenames are configured in the selected YAML config.
+Prepare:
 
-## Config files
+- a v2 config such as `config/v2_base.yaml`
+- a market config such as `config/markets/example.yaml`
+- an offices CSV with at least `office_id,address,tier`
+- `GOOGLE_MAPS_API_KEY` in the environment
 
-- `config/default.yaml`: full 8-scenario production-style run
-- `config/single_scenario_test.yaml`: single-matrix test run using `static_average.csv`
-
-You choose the config at runtime:
+Run:
 
 ```bash
-warm-spare run --config config/default.yaml
-warm-spare run --config config/single_scenario_test.yaml
+export GOOGLE_MAPS_API_KEY=your_key_here
+warm-spare build-matrix --config config/v2_base.yaml --market example
 ```
+
+This writes a timestamped matrix-build directory under the market output root and generates:
+
+- directional matrices: `__office_to_candidate.csv`, `__candidate_to_office.csv`
+- round-trip matrices: `__round_trip.csv`
+- `candidate_sites.csv`
+- `office_manifest.csv`
+- `build_report.md`
+- `build_manifest.json`
+- `analysis_config.yaml`
+
+If unresolved API pairs remain after retries, the build exits non-zero and writes `unresolved_pairs.csv`. Successful pairs remain cached so reruns resume instead of restarting.
+
+If a realtime scenario is quarantined, the build also writes:
+
+- `quarantined_pairs.csv`
+- `quarantine_manifest.json`
+
+Resolution reruns automatically bind back to the cache database recorded in the original build manifest, so only the quarantined office/candidate pairs are refreshed.
+
+Use those artifacts in one of two ways:
+
+- rerun only quarantined office/candidate pairs on a later day:
+
+```bash
+warm-spare build-matrix \
+  --config config/v2_base.yaml \
+  --market example \
+  --resolve-quarantine-from outputs/matrix_builds/<timestamp>_<market>
+```
+
+- accept a quarantined scenario after review and keep it in the generated analysis config:
+
+```bash
+warm-spare build-matrix \
+  --config config/v2_base.yaml \
+  --market example \
+  --accept-quarantined-scenario realtime_now
+```
+
+### 2. Run analysis on generated matrices
+
+Use the generated config from the matrix-build output directory:
+
+```bash
+warm-spare run --config outputs/matrix_builds/<timestamp>_<market>/analysis_config.yaml
+```
+
+## Input contracts
+
+### Office CSV for matrix building
+
+Required columns:
+
+- `office_id`
+- `address`
+- `tier`
+
+Optional metadata:
+
+- `name`
+- `latitude`
+- `longitude`
+- `market`
+
+### Round-trip analysis matrices
+
+For each configured scenario, the analysis pipeline expects either:
+
+- `<scenario_id>__round_trip.csv`
+
+or, for legacy compatibility only:
+
+- `<scenario_id>.csv`
+
+Rows are all offices. Columns are eligible spare candidates only.
 
 ## CLI modes
 
-All commands write outputs to a timestamped run directory under `outputs/`.
+### `build-matrix`
 
-### `validate`
+Builds directional and round-trip candidate matrices from office addresses and market config.
 
-Validates the inputs and writes:
+Required extras:
 
-- `resolved_config.yaml`
-- `run_metadata.json`
-- `validation_report.md`
-
-Use this when you want to confirm file shape, labels, weights, canonical ordering, diagonal fixes, and feasibility diagnostics before generating preprocessing artifacts or solving.
+- `--market <short_name>` or `--market-file <path>`
+- optional: `--resolve-quarantine-from <build_dir_or_manifest>`
+- optional: `--accept-quarantined-scenario <scenario_id>` repeated as needed
 
 Example:
 
 ```bash
-warm-spare validate --config config/default.yaml
+warm-spare build-matrix --config config/v2_base.yaml --market example
 ```
+
+### `validate`
+
+Validates rectangular round-trip matrices and writes:
+
+- `resolved_config.yaml`
+- `run_metadata.json`
+- `validation_report.md`
 
 ### `preprocess`
 
 Runs validation plus preprocessing and writes:
 
-- `resolved_config.yaml`
-- `run_metadata.json`
-- `validation_report.md`
 - `office_feasibility.csv`
 - `d_avg.csv`
 - `d_max.csv`
 - `feasibility_mask.csv`
 
-Use this when you want to inspect the normalized matrices and feasibility mask before solving.
-
-Example:
-
-```bash
-warm-spare preprocess --config config/default.yaml
-```
-
 ### `optimize`
 
-Runs the full analysis pipeline:
-
-- validation
-- preprocessing
-- optimization for each configured `k`
-- metrics generation
-- recommendation generation
-- plot generation when enabled in config
-
-Outputs include everything from `preprocess` plus:
-
-- `metrics_by_k.csv`
-- `selected_sites_by_k.csv`
-- `assignments_k_<k>.csv`
-- `recommendation.md`
-- PNG charts when plotting is enabled
-
-Example:
-
-```bash
-warm-spare optimize --config config/default.yaml
-```
+Runs the full analysis pipeline on prepared matrices.
 
 ### `report`
 
-Current behavior is the same as `optimize`.
-
-It exists as a workflow alias for a report-focused run and produces the same end-to-end outputs.
-
-Example:
-
-```bash
-warm-spare report --config config/default.yaml
-```
+Current behavior matches `optimize`.
 
 ### `run`
 
-Current behavior is the same as `optimize`.
+Current behavior matches `optimize` and is the default end-to-end analysis command.
 
-Use this as the default end-to-end command when you simply want the full workflow without thinking about intermediate stages.
+## V2 configuration files
 
-Example:
+- `config/v2_base.yaml`: sample v2 config with static baseline plus realtime-now scenario definitions
+- `config/markets/example.yaml`: sample market file resolved by `--market example`
+- `config/default.yaml`: legacy-style analysis config for prebuilt scenarios
+- `config/single_scenario_test.yaml`: legacy-style single-scenario test config
 
-```bash
-warm-spare run --config config/default.yaml
-```
+## Modeling changes in V2
 
-## Typical usage
+- Optimization uses round-trip minutes, not symmetrized one-way times.
+- Tier 4 offices remain demand points but are excluded from candidate spare sites by default.
+- Static baseline scenarios are used to screen realtime anomalies.
+- Realtime scenarios can be quarantined automatically and excluded from the generated analysis config.
+- Pair anomaly screening uses the largest of three thresholds: `30` minutes, `50%` of static baseline, or `3σ` of the realtime-minus-static delta distribution for that scenario.
+- Quarantined scenarios can be re-sampled later with `--resolve-quarantine-from` or explicitly accepted with `--accept-quarantined-scenario`.
 
-### Full 8-scenario run
+## Validation and reporting outputs
 
-```bash
-warm-spare validate --config config/default.yaml
-warm-spare preprocess --config config/default.yaml
-warm-spare run --config config/default.yaml
-```
-
-### Single-scenario test run
-
-Provide these files:
-
-- `data/input/offices.csv`
-- `data/input/scenarios/static_average.csv`
-
-Then run:
-
-```bash
-warm-spare run --config config/single_scenario_test.yaml
-```
-
-In that mode, the single matrix is used as both `D_avg` and `D_max`, which is useful for testing the rest of the pipeline before you have all 8 traffic scenarios.
-
-## Output summary
-
-Depending on mode, the run directory may include:
+Depending on mode, run directories may include:
 
 - `resolved_config.yaml`
 - `run_metadata.json`

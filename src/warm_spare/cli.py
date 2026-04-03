@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import sys
 
-from warm_spare.config import load_config
+from warm_spare.config import ConfigError, load_config, resolve_market_config
 from warm_spare.evaluate import evaluate_results
 from warm_spare.io import ValidationError, load_and_validate_inputs
+from warm_spare.matrix_builder import ProviderError, build_matrix_dataset
 from warm_spare.optimize import solve_all_k
 from warm_spare.plotting import generate_plots
 from warm_spare.preprocess import enforce_global_feasibility, preprocess_inputs
@@ -25,27 +26,51 @@ from warm_spare.reporting import (
 
 FULL_COMMANDS = {"optimize", "report", "run"}
 PREPROCESS_COMMANDS = {"preprocess", *FULL_COMMANDS}
-VALIDATE_COMMANDS = {"validate", *PREPROCESS_COMMANDS}
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="warm-spare",
-        description="Validate inputs, preprocess matrices, solve warm spare placement, and generate reports.",
+        description="Validate inputs, build drive-time matrices, preprocess matrices, solve warm spare placement, and generate reports.",
         epilog=(
-            "Commands: validate=validation only; preprocess=validation plus preprocessing artifacts; "
+            "Commands: build-matrix=call provider and generate directional/round-trip datasets; "
+            "validate=validation only; preprocess=validation plus preprocessing artifacts; "
             "optimize/report/run=full end-to-end analysis. Select a config with --config."
         ),
     )
     parser.add_argument(
         "command",
-        choices=["validate", "preprocess", "optimize", "report", "run"],
+        choices=["build-matrix", "validate", "preprocess", "optimize", "report", "run"],
         help="Pipeline mode to execute.",
     )
     parser.add_argument(
         "--config",
         default="config/default.yaml",
         help="Path to the YAML config file. Defaults to config/default.yaml.",
+    )
+    parser.add_argument(
+        "--market",
+        help="Short market alias that resolves to config/markets/<market>.yaml for build-matrix.",
+    )
+    parser.add_argument(
+        "--market-file",
+        help="Explicit path to a market YAML file for build-matrix.",
+    )
+    parser.add_argument(
+        "--resolve-quarantine-from",
+        help=(
+            "For build-matrix, rerun only the previously quarantined office/candidate pairs from a prior "
+            "build directory or quarantine_manifest.json."
+        ),
+    )
+    parser.add_argument(
+        "--accept-quarantined-scenario",
+        action="append",
+        default=[],
+        help=(
+            "For build-matrix, keep a quarantined realtime scenario in the generated analysis config after "
+            "review. Repeat the flag for multiple scenario IDs."
+        ),
     )
     return parser
 
@@ -56,6 +81,17 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         config = load_config(args.config)
+        if args.command == "build-matrix":
+            market = resolve_market_config(args.market, args.market_file)
+            result = build_matrix_dataset(
+                config,
+                market,
+                resolve_quarantine_from=args.resolve_quarantine_from,
+                accept_quarantined_scenarios=set(args.accept_quarantined_scenario),
+            )
+            print(result.output_dir)
+            return 0 if result.success else 2
+
         output_dir = create_output_dir(config.paths.output_root, args.command)
         write_resolved_config(output_dir, config)
         write_run_metadata(output_dir, collect_run_metadata(config))
@@ -88,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
 
         print(output_dir)
         return 0
-    except ValidationError as exc:
+    except (ValidationError, ConfigError, ProviderError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     except Exception as exc:

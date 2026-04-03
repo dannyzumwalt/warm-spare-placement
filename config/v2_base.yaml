@@ -1,0 +1,72 @@
+paths:
+  offices_csv: data/input/offices.csv
+  scenarios_dir: data/input/scenarios
+  output_root: outputs
+
+scenario_names:
+  - static_baseline
+  - realtime_now
+
+k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+sla_minutes: 120
+candidate_tiers: [1, 2, 3]
+
+scenario_weight_profiles:
+  balanced_default:
+    static_baseline: 0.5
+    realtime_now: 0.5
+  static_only:
+    static_baseline: 1.0
+    realtime_now: 0.0
+active_scenario_profile: balanced_default
+
+tier_weights:
+  1: 10
+  2: 6
+  3: 3
+  4: 1
+
+solver:
+  time_limit_seconds: 30
+  random_seed: 42
+  num_workers: 8
+  objective_scale: 100
+
+recommendation:
+  plateau_threshold_pct: 5.0
+  plateau_consecutive_steps: 2
+  tier2_guardrail_pct: 2.0
+
+artifacts:
+  persist_preprocessed_csv: true
+  generate_plots: true
+
+matrix_builder:
+  provider: google_distance_matrix
+  api_key_env_var: GOOGLE_MAPS_API_KEY
+  cache_db_path: outputs/matrix_cache.sqlite
+  eligible_spare_tiers: [1, 2, 3]
+  accepted_anomaly_scenarios: []
+  retry_policy:
+    max_attempts: 3
+    initial_backoff_seconds: 1.0
+    max_backoff_seconds: 30.0
+    jitter_seconds: 0.5
+  batch_limits:
+    max_origins_per_request: 25
+    max_destinations_per_request: 25
+    max_elements_per_request: 100
+  anomaly:
+    pair_abs_minutes: 30.0
+    pair_pct_of_static: 0.5
+    pair_zscore_threshold: 3.0
+    scenario_pair_fraction: 0.05
+    scenario_tier12_pair_fraction: 0.02
+    quarantine_by_default: true
+  scenarios:
+    - id: static_baseline
+      departure_policy: none
+      traffic_model: null
+    - id: realtime_now
+      departure_policy: now
+      traffic_model: best_guess

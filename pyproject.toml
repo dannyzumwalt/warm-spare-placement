@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "warm-spare"
-version = "0.1.0"
+version = "0.2.0"
 description = "Warm spare placement optimization for wire centers"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,7 @@ dependencies = [
   "pandas>=2.2",
   "ortools>=9.9",
   "PyYAML>=6.0",
+  "googlemaps>=4.7.3",
 ]
 
 [project.optional-dependencies]

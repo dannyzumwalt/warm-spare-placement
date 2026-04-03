@@ -6,12 +6,17 @@ from warm_spare.models import AppConfig, PreprocessResult, ValidationResult
 
 
 def preprocess_inputs(config: AppConfig, validation: ValidationResult) -> PreprocessResult:
-    symmetrized: dict[str, pd.DataFrame] = {}
-    for scenario_name, matrix in validation.scenario_matrices.items():
-        symmetrized[scenario_name] = (matrix + matrix.T) / 2.0
-
-    d_avg = _weighted_average(symmetrized, validation.normalized_weights, validation.canonical_order)
-    d_max = _elementwise_max(symmetrized, validation.canonical_order)
+    d_avg = _weighted_average(
+        validation.scenario_matrices,
+        validation.normalized_weights,
+        validation.canonical_order,
+        validation.candidate_order,
+    )
+    d_max = _elementwise_max(
+        validation.scenario_matrices,
+        validation.canonical_order,
+        validation.candidate_order,
+    )
     feasibility_mask = (d_max <= config.sla_minutes).astype(int)
 
     office_feasibility = _build_office_feasibility(
@@ -24,7 +29,8 @@ def preprocess_inputs(config: AppConfig, validation: ValidationResult) -> Prepro
     return PreprocessResult(
         offices=validation.offices.copy(),
         canonical_order=list(validation.canonical_order),
-        symmetrized_matrices=symmetrized,
+        candidate_order=list(validation.candidate_order),
+        directional_matrices=dict(validation.directional_matrices),
         d_avg=d_avg,
         d_max=d_max,
         feasibility_mask=feasibility_mask,
@@ -47,8 +53,9 @@ def _weighted_average(
     matrices: dict[str, pd.DataFrame],
     weights: dict[str, float],
     canonical_order: list[str],
+    candidate_order: list[str],
 ) -> pd.DataFrame:
-    result = pd.DataFrame(0.0, index=canonical_order, columns=canonical_order)
+    result = pd.DataFrame(0.0, index=canonical_order, columns=candidate_order)
     for scenario_name, matrix in matrices.items():
         result = result + matrix * float(weights[scenario_name])
     return result
@@ -57,12 +64,13 @@ def _weighted_average(
 def _elementwise_max(
     matrices: dict[str, pd.DataFrame],
     canonical_order: list[str],
+    candidate_order: list[str],
 ) -> pd.DataFrame:
     stacked = pd.concat(
         [matrix.stack().rename(name) for name, matrix in matrices.items()], axis=1
     )
     max_series = stacked.max(axis=1)
-    return max_series.unstack().loc[canonical_order, canonical_order]
+    return max_series.unstack().loc[canonical_order, candidate_order]
 
 
 def _build_office_feasibility(

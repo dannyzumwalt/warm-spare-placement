@@ -1,0 +1,5 @@
+market_id: example
+label: Example Market
+offices_csv: data/input/offices.csv
+output_root: outputs
+eligible_spare_tiers: [1, 2, 3]

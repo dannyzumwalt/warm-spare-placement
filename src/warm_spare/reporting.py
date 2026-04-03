@@ -696,6 +696,7 @@ def _spare_detail_maps_html(output_dir: Path, spare_detail_maps: list[SpareSiteM
         title = html.escape(detail.site_name or detail.spare_site)
         site_id = html.escape(detail.spare_site)
         address = html.escape(detail.address or "n/a")
+        site_tier = "n/a" if detail.site_tier is None else str(detail.site_tier)
         sections.extend(
             [
                 '<div class="detail-grid">',
@@ -703,6 +704,7 @@ def _spare_detail_maps_html(output_dir: Path, spare_detail_maps: list[SpareSiteM
                 '<div class="detail-card">',
                 f"<h3>{title}</h3>",
                 f"<p><strong>Spare site:</strong> <code>{site_id}</code></p>",
+                f"<p><strong>Spare site tier:</strong> Tier {site_tier}</p>",
                 f'<p><strong>Address:</strong> <span class="muted">{address}</span></p>',
                 f"<p><strong>Total assigned offices:</strong> {detail.total_offices}</p>",
                 "<p><strong>Assigned offices by tier</strong></p>",

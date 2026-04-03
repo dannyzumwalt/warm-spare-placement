@@ -197,6 +197,7 @@ class SpareSiteMapDetail:
     spare_site: str
     address: str | None
     site_name: str | None
+    site_tier: int | None
     total_offices: int
     tier_counts: dict[int, int]
     map_path: str

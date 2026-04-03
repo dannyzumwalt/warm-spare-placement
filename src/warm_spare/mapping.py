@@ -422,6 +422,7 @@ def _write_spare_detail_maps(
                 spare_site=spare_site,
                 address=None if pd.isna(address) else str(address),
                 site_name=None if pd.isna(site_name) else str(site_name),
+                site_tier=None if office_row is None else int(office_row["tier"]),
                 total_offices=int(len(assigned)),
                 tier_counts=tier_counts,
                 map_path=filename,

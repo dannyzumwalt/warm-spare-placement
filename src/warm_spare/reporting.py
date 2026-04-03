@@ -503,6 +503,7 @@ def _full_recommendation_content(
     assignments_path = output_dir / f"assignments_k_{selected_k}.csv"
     site_csv_path = output_dir / "recommended_selected_sites.csv"
     map_section = _map_section_lines(map_path, spare_detail_maps)
+    methodology_lines = _methodology_section_lines(output_dir, preprocess, recommendation)
 
     return "\n".join(
         [
@@ -544,6 +545,8 @@ def _full_recommendation_content(
             f"- Average load per spare: `{_fmt_float(selected_row['avg_load_per_spare'])}` offices",
             f"- Maximum load on any spare: `{_fmt_float(selected_row['max_load_per_spare'])}` offices",
             f"- Offices reassigned from `k={selected_k - 1}` to `k={selected_k}`: `{_fmt_float(selected_row['offices_reassigned_from_prev_k'])}`",
+            "",
+            *methodology_lines,
             "",
             "## Caveats and Notes",
             *notes,
@@ -771,12 +774,85 @@ def _git_commit_hash() -> str | None:
     return output.strip() or None
 
 
+def _methodology_section_lines(
+    output_dir: Path,
+    preprocess: PreprocessResult,
+    recommendation: RecommendationResult,
+) -> list[str]:
+    resolved = _load_resolved_config(output_dir)
+    scenario_names = resolved.get("scenario_names") if isinstance(resolved.get("scenario_names"), list) else []
+    active_profile = resolved.get("active_scenario_profile")
+    candidate_tiers = resolved.get("candidate_tiers") if isinstance(resolved.get("candidate_tiers"), list) else []
+    one_way_sla = resolved.get("sla_minutes")
+    round_trip_sla = resolved.get("round_trip_sla_minutes")
+    if round_trip_sla is None and one_way_sla is not None:
+        try:
+            round_trip_sla = float(one_way_sla) * 2.0
+        except Exception:
+            round_trip_sla = None
+    scenario_text = ", ".join(f"`{name}`" for name in scenario_names) if scenario_names else "the configured scenario set"
+    candidate_text = ", ".join(str(tier) for tier in candidate_tiers) if candidate_tiers else "1, 2, 3"
+    warnings_text = (
+        "Real-time scenarios that materially diverged from the static baseline were quarantined by default unless explicitly accepted."
+        if preprocess.directional_matrices
+        else "No directional scenario diagnostics were available for this run."
+    )
+    return [
+        "## Methodology",
+        "This section explains how the analysis was built and why this optimization method fits the warm spare placement problem.",
+        "",
+        "### What was optimized",
+        "The solver tested each site count in the configured range and found the best placement for that exact number of warm spare sites. For this run, the recommendation layer then compared those optimal per-`k` solutions and chose a defensible stopping point rather than simply selecting the largest footprint.",
+        "",
+        "The optimization model is a weighted p-median formulation, which is the discrete optimization form of a k-medoids problem. In plain terms, it chooses real offices as warm spare locations and assigns every office to one selected spare site while minimizing weighted travel burden.",
+        "",
+        "### Why a medoid-style model was chosen",
+        "A medoid-style model is the right fit here because the warm spare must be a real office location, not a synthetic center point. Methods like k-means create abstract centroids in open space, which does not work when each chosen site must be an actual wire center and travel cost is based on road time rather than straight-line distance.",
+        "",
+        "This approach also supports the requirements that matter operationally for this problem:",
+        "- chosen spare sites must be actual candidate offices",
+        "- travel cost comes from a precomputed drive-time matrix rather than Euclidean distance",
+        f"- feasibility can enforce a one-way SLA of `{_fmt_float(one_way_sla)}` minutes and a round-trip SLA of `{_fmt_float(round_trip_sla)}` minutes",
+        f"- candidate spare sites can be restricted by tier; this run allowed Tier {candidate_text} as spare candidates",
+        "- office priority can be reflected through tier weights",
+        "",
+        "### Data used in this run",
+        f"- Scenarios used: {scenario_text}",
+        f"- Active scenario profile: `{active_profile}`" if active_profile else "- Active scenario profile: n/a",
+        f"- Offices in demand set: `{len(preprocess.canonical_order)}`",
+        f"- Offices in candidate spare set: `{len(preprocess.candidate_order)}`",
+        "- Office inputs include office ID, tier, and address metadata when available.",
+        "- Directional office-to-spare and spare-to-office travel times are retained for diagnostics, while round-trip matrices are used for optimization and SLA screening.",
+        "",
+        "### How travel time and feasibility were handled",
+        "For each office-candidate pair, the analysis uses round-trip travel time as the optimization cost because the operational question is how quickly a spare can get to the failed site and return. The preprocessing step also keeps directional travel times so asymmetric traffic patterns can still be reviewed instead of being hidden by a symmetric average.",
+        "",
+        "Pairs are marked infeasible before the solver runs if they violate the configured one-way or round-trip SLA threshold. If any office has no feasible candidate spare after that precheck, the analysis stops and reports the dataset as globally infeasible.",
+        "",
+        "### How office priority was handled",
+        "Each office tier carries a configurable weight. Higher-priority offices contribute more to the weighted travel burden, so the model prefers improvements for those locations when tradeoffs are required. Tier 4 offices remain demand points but are not eligible to be selected as warm spare sites in the current V2 design.",
+        "",
+        "### How the recommendation was chosen",
+        "Optimization and recommendation are separate steps. First, the solver finds the best solution for each tested `k`. Second, the recommendation layer compares those solved points using diminishing-returns logic, neighboring `k` comparisons, and business guardrails. This keeps the analysis transparent: the report can show both the best solution at each site count and why the final recommendation stopped where it did.",
+        "",
+        f"- Recommendation rule used in this run: `{recommendation.chosen_rule}`",
+        "- The objective curve and worst-case charts are used to show where additional sites produce smaller incremental benefit.",
+        "- Neighboring `k` comparisons are included so the tradeoff between one fewer or one more spare site is explicit.",
+        "",
+        "### Anomaly handling and scenario screening",
+        warnings_text,
+        "Static baseline scenarios are used as a reasonableness check on live traffic snapshots so an accident, closure, holiday effect, or abnormal day does not silently distort the planning recommendation.",
+        "",
+        "### What this analysis does not yet model",
+        "- The current optimization is uncapacitated, so it does not directly balance assigned load across spare sites.",
+        "- It does not model cabinet capacity or multi-spare capacity at a single site.",
+        "- The quality of the recommendation still depends on clean tier assignments, address quality, and representative travel-time scenarios.",
+    ]
+
+
 def _market_display_name(preprocess: PreprocessResult, output_dir: Path) -> str:
     del preprocess
-    try:
-        resolved_config = yaml.safe_load((output_dir / "resolved_config.yaml").read_text(encoding="utf-8"))
-    except Exception:
-        resolved_config = {}
+    resolved_config = _load_resolved_config(output_dir)
     if isinstance(resolved_config, dict):
         label = resolved_config.get("market_label")
         if label:
@@ -792,6 +868,14 @@ def _market_slug(preprocess: PreprocessResult, output_dir: Path) -> str:
     slug = "".join(ch if ch.isalnum() else "_" for ch in display_name)
     slug = "_".join(part for part in slug.split("_") if part)
     return slug or "market"
+
+
+def _load_resolved_config(output_dir: Path) -> dict[str, object]:
+    try:
+        resolved_config = yaml.safe_load((output_dir / "resolved_config.yaml").read_text(encoding="utf-8"))
+    except Exception:
+        resolved_config = {}
+    return resolved_config if isinstance(resolved_config, dict) else {}
 
 
 def _markdown_table(frame) -> str:

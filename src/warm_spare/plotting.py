@@ -87,9 +87,22 @@ def _multi_line_chart(
     ylabel: str,
 ) -> Path:
     fig, ax = plt.subplots(figsize=(8, 4.5))
+    label_map = {
+        "tier1_avg_drive": "Tier 1 avg",
+        "tier2_avg_drive": "Tier 2 avg",
+        "tier3_avg_drive": "Tier 3 avg",
+        "tier4_avg_drive": "Tier 4 avg",
+        "tier1_worst_avg_drive": "Tier 1 worst avg",
+        "tier2_worst_avg_drive": "Tier 2 worst avg",
+        "overall_worst_avg_drive": "Overall worst avg",
+        "overall_worst_case_drive": "Overall worst case",
+        "max_assigned_dmax": "Max assigned one-way",
+        "site_overlap_with_prev_k": "Site overlap vs prev k",
+        "offices_reassigned_from_prev_k": "Offices reassigned vs prev k",
+    }
     for column in columns:
         if column in metrics.columns:
-            ax.plot(metrics["k"], metrics[column], marker="o", label=column)
+            ax.plot(metrics["k"], metrics[column], marker="o", label=label_map.get(column, column))
     ax.set_title(title)
     ax.set_xlabel("k")
     ax.set_ylabel(ylabel)

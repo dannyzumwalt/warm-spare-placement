@@ -37,6 +37,24 @@ class EvaluateTests(unittest.TestCase):
             }
             self.assertTrue(expected.issubset(set(metrics.columns)))
 
+    def test_max_assigned_dmax_uses_one_way_metric(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path, _ = write_analysis_fixture(Path(tmp))
+            config = load_config(config_path)
+            validation = load_and_validate_inputs(config)
+            preprocess = preprocess_inputs(config, validation)
+            results = solve_all_k(config, preprocess)
+            metrics = evaluate_results(
+                preprocess,
+                results,
+                config.sla_minutes,
+                config.effective_round_trip_sla_minutes(),
+            )
+
+            first_row = metrics.loc[metrics["k"] == 1].iloc[0]
+            self.assertEqual(first_row["overall_worst_case_drive"], 212.0)
+            self.assertEqual(first_row["max_assigned_dmax"], 109.0)
+
 
 if __name__ == "__main__":
     unittest.main()

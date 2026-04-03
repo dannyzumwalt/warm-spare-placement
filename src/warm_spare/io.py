@@ -95,7 +95,8 @@ def load_and_validate_inputs(config: AppConfig) -> ValidationResult:
 def load_offices_frame(path: Path, *, require_address: bool) -> pd.DataFrame:
     if not path.exists():
         raise ValidationError(f"Missing offices file: {path}")
-    offices = pd.read_csv(path)
+    offices = pd.read_csv(path, skipinitialspace=True)
+    offices.columns = [column.strip() if isinstance(column, str) else column for column in offices.columns]
     missing = [column for column in REQUIRED_OFFICE_COLUMNS if column not in offices.columns]
     if missing:
         raise ValidationError(f"offices.csv missing required columns: {missing}")
@@ -106,12 +107,22 @@ def load_offices_frame(path: Path, *, require_address: bool) -> pd.DataFrame:
         column for column in OPTIONAL_OFFICE_COLUMNS if column in offices.columns
     ]
     offices = offices[selected_columns].copy()
+    text_columns = offices.select_dtypes(include=["object", "string"]).columns
+    for column in text_columns:
+        offices[column] = offices[column].map(lambda value: value.strip() if isinstance(value, str) else value)
+        offices[column] = offices[column].replace("", pd.NA)
+
+    if offices["office_id"].isna().any():
+        raise ValidationError("office_id column contains null values")
     offices["office_id"] = offices["office_id"].astype(str)
     if offices["office_id"].duplicated().any():
         dupes = offices.loc[offices["office_id"].duplicated(), "office_id"].tolist()
         raise ValidationError(f"Duplicate office_id values found: {dupes}")
     if offices["tier"].isna().any():
         raise ValidationError("tier column contains null values")
+    offices["tier"] = pd.to_numeric(offices["tier"], errors="coerce")
+    if offices["tier"].isna().any():
+        raise ValidationError("tier column contains non-numeric values")
     offices["tier"] = offices["tier"].astype(int)
     invalid_tiers = sorted(set(offices.loc[~offices["tier"].isin([1, 2, 3, 4]), "tier"].tolist()))
     if invalid_tiers:

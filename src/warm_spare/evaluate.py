@@ -120,7 +120,11 @@ def _evaluate_single(
         "tier2_worst_avg_drive": float(worst_avg_by_tier.get(2, math.nan)),
         "overall_worst_avg_drive": float(assignments["avg_drive_minutes"].max()),
         "overall_worst_case_drive": float(assignments["worst_case_drive_minutes"].max()),
-        "max_assigned_dmax": float(assignments["worst_case_drive_minutes"].max()),
+        "max_assigned_dmax": (
+            float(assignments["worst_case_one_way_drive_minutes"].max())
+            if "worst_case_one_way_drive_minutes" in assignments.columns
+            else math.nan
+        ),
         "sla_violations": sla_violations,
         "selected_site_count": int(len(result.selected_sites)),
         "avg_load_per_spare": avg_load,

@@ -193,6 +193,16 @@ class RecommendationResult:
 
 
 @dataclass(slots=True)
+class SpareSiteMapDetail:
+    spare_site: str
+    address: str | None
+    site_name: str | None
+    total_offices: int
+    tier_counts: dict[int, int]
+    map_path: str
+
+
+@dataclass(slots=True)
 class RunMetadata:
     timestamp_utc: str
     python_version: str

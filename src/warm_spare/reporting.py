@@ -19,6 +19,7 @@ from warm_spare.models import (
     PreprocessResult,
     RecommendationResult,
     RunMetadata,
+    SpareSiteMapDetail,
     ValidationResult,
 )
 
@@ -167,6 +168,7 @@ def write_recommendation_report(
     *,
     short_report: bool = False,
     map_path: Path | None = None,
+    spare_detail_maps: list[SpareSiteMapDetail] | None = None,
     map_warnings: list[str] | None = None,
 ) -> Path:
     path = output_dir / "recommendation.md"
@@ -194,15 +196,21 @@ def write_recommendation_report(
             selected_result=selected_result,
             selected_site_table=recommended_sites_table,
             map_path=map_path,
+            spare_detail_maps=spare_detail_maps or [],
             map_warnings=map_warnings or [],
         )
     path.write_text(content + "\n", encoding="utf-8")
-    write_recommendation_html(output_dir, content)
+    write_recommendation_html(output_dir, content, spare_detail_maps or [])
     return path
 
 
-def write_recommendation_html(output_dir: Path, markdown_content: str) -> Path:
+def write_recommendation_html(
+    output_dir: Path,
+    markdown_content: str,
+    spare_detail_maps: list[SpareSiteMapDetail],
+) -> Path:
     body = _markdown_to_html(markdown_content, output_dir)
+    detail_html = _spare_detail_maps_html(output_dir, spare_detail_maps)
     html_content = "\n".join(
         [
             "<!DOCTYPE html>",
@@ -226,6 +234,12 @@ def write_recommendation_html(output_dir: Path, markdown_content: str) -> Path:
             "th { background: #f0f4f8; }",
             ".image-block { margin: 1rem 0 1.8rem; }",
             ".image-block img { width: 100%; max-width: 100%; height: auto; border: 1px solid #d9e2ec; background: white; }",
+            ".detail-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 20px; margin: 1rem 0 2rem; align-items: start; }",
+            ".detail-card { background: white; border: 1px solid #d9e2ec; border-radius: 8px; padding: 16px; }",
+            ".detail-card h3 { margin-top: 0; }",
+            ".detail-image img { width: 100%; height: auto; border: 1px solid #d9e2ec; background: white; }",
+            ".muted { color: #52606d; }",
+            "@media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } }",
             "a { color: #0b6efd; text-decoration: none; }",
             "a:hover { text-decoration: underline; }",
             "</style>",
@@ -233,6 +247,7 @@ def write_recommendation_html(output_dir: Path, markdown_content: str) -> Path:
             "<body>",
             "<div class=\"page\">",
             body,
+            detail_html,
             "</div>",
             "</body>",
             "</html>",
@@ -434,6 +449,7 @@ def _full_recommendation_content(
     selected_result: OptimizationResult | None,
     selected_site_table: pd.DataFrame | None,
     map_path: Path | None,
+    spare_detail_maps: list[SpareSiteMapDetail],
     map_warnings: list[str],
 ) -> str:
     if selected_row is None or selected_result is None or selected_result.assignments is None:
@@ -464,7 +480,7 @@ def _full_recommendation_content(
         notes.extend(f"- {warning}" for warning in map_warnings)
     assignments_path = output_dir / f"assignments_k_{selected_k}.csv"
     site_csv_path = output_dir / "recommended_selected_sites.csv"
-    map_section = _map_section_lines(map_path)
+    map_section = _map_section_lines(map_path, spare_detail_maps)
 
     return "\n".join(
         [
@@ -635,7 +651,7 @@ def _chart_section_lines(output_dir: Path) -> list[str]:
     return lines
 
 
-def _map_section_lines(map_path: Path | None) -> list[str]:
+def _map_section_lines(map_path: Path | None, spare_detail_maps: list[SpareSiteMapDetail]) -> list[str]:
     lines = [
         "## Recommended Coverage Map",
         "Color shows which recommended warm spare serves each office. Marker shape shows office tier. Star markers indicate the selected warm spare locations.",
@@ -655,7 +671,48 @@ def _map_section_lines(map_path: Path | None) -> list[str]:
     else:
         lines.append("- Map was not generated for this run.")
         lines.append("")
+    if spare_detail_maps:
+        lines.extend(
+            [
+                "The HTML version of this report also includes one zoomed detail map per selected warm spare, along with the spare address and assigned-office tier counts.",
+                "",
+            ]
+        )
     return lines
+
+
+def _spare_detail_maps_html(output_dir: Path, spare_detail_maps: list[SpareSiteMapDetail]) -> str:
+    if not spare_detail_maps:
+        return ""
+    sections = ["<section>", "<h2>Spare Site Detail Maps</h2>"]
+    for detail in spare_detail_maps:
+        data_uri = _image_data_uri(output_dir / detail.map_path)
+        if data_uri is None:
+            continue
+        tier_lines = "".join(
+            f"<li>Tier {tier}: <strong>{count}</strong></li>"
+            for tier, count in [(1, detail.tier_counts.get(1, 0)), (2, detail.tier_counts.get(2, 0)), (3, detail.tier_counts.get(3, 0)), (4, detail.tier_counts.get(4, 0))]
+        )
+        title = html.escape(detail.site_name or detail.spare_site)
+        site_id = html.escape(detail.spare_site)
+        address = html.escape(detail.address or "n/a")
+        sections.extend(
+            [
+                '<div class="detail-grid">',
+                f'<div class="detail-image"><img alt="Spare detail map for {site_id}" src="{data_uri}"></div>',
+                '<div class="detail-card">',
+                f"<h3>{title}</h3>",
+                f"<p><strong>Spare site:</strong> <code>{site_id}</code></p>",
+                f'<p><strong>Address:</strong> <span class="muted">{address}</span></p>',
+                f"<p><strong>Total assigned offices:</strong> {detail.total_offices}</p>",
+                "<p><strong>Assigned offices by tier</strong></p>",
+                f"<ul>{tier_lines}</ul>",
+                "</div>",
+                "</div>",
+            ]
+        )
+    sections.append("</section>")
+    return "\n".join(sections)
 
 
 def _pct_change(start: float, end: float) -> str:

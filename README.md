@@ -197,6 +197,7 @@ Optional reporting flag for `optimize`, `report`, and `run`:
 - `build-matrix` now emits live progress to the terminal while collecting each scenario/direction.
 - `build-matrix` now geocodes office addresses once, caches coordinates locally, and writes `office_coordinates.csv` for later report mapping.
 - `run` now writes both `recommendation.md` and a self-contained `recommendation.html`; if `GOOGLE_MAPS_API_KEY` is set and Maps Static API is enabled, the report map uses a Google roadway basemap.
+- `recommendation.html` includes the market overview map plus one zoomed detail map per selected warm spare, with the spare address and assigned-office tier counts beside each detail map.
 
 ## Validation and reporting outputs
 
@@ -215,6 +216,7 @@ Depending on mode, run directories may include:
 - `recommended_selected_sites.csv`
 - `assignments_k_<k>.csv`
 - `recommended_sites_map.png`
+- `spare_detail_map_<office_id>.png`
 - `recommendation.md`
 - `recommendation.html`
 - plot PNGs

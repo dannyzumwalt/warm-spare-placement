@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
             write_metrics(output_dir, metrics)
             if config.artifacts.generate_plots:
                 generate_plots(metrics, output_dir)
-            map_path, map_warnings = generate_recommendation_map(
+            map_path, spare_detail_maps, map_warnings = generate_recommendation_map(
                 config,
                 preprocess,
                 optimization_results,
@@ -157,6 +157,7 @@ def main(argv: list[str] | None = None) -> int:
                 preprocess,
                 short_report=bool(args.short_report),
                 map_path=map_path,
+                spare_detail_maps=spare_detail_maps,
                 map_warnings=map_warnings,
             )
 

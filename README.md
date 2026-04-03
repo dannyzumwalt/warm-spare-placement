@@ -222,3 +222,38 @@ Depending on mode, run directories may include:
 - `recommendation.html`
 - `recommendation_<market>.html`
 - plot PNGs
+
+## Potential V3 and V4 enhancements
+
+### V3: capacity-aware and load-balanced placement
+
+- Add an optional load-balancing optimization mode so the solver does not over-concentrate demand on a single central spare site.
+- Evaluate load balance inside the optimization itself, not as a manual post-processing step, so any extra site is chosen in the correct location and all office-to-spare assignments are recalculated consistently.
+- Support business rules such as:
+  - maximum assigned offices per spare site
+  - weighted demand caps by assigned tier mix
+  - soft penalties for concentrated load when a hard cap is not appropriate
+- Allow the analysis to compare the best balanced `k` solution against the best balanced `k+1` solution when load concentration justifies the additional site.
+- Preserve protection for outlier offices so balancing load does not materially degrade drive times for the most difficult-to-cover locations.
+
+### V4: web-based operations and analysis UI
+
+- Add a web application for end-to-end management of markets, inputs, runs, and outputs.
+- Provide market management tools for:
+  - uploading office CSVs
+  - browsing market offices and candidate sites
+  - reviewing geocodes and matrix coverage
+- Provide run management tools for:
+  - launching matrix builds and analyses
+  - viewing logs and run status
+  - opening completed analyses in separate browser tabs for side-by-side comparison
+  - browsing prior runs and outputs by market
+- Provide matrix and anomaly review tools for:
+  - inspecting generated matrices
+  - flagging quarantined scenarios or problematic site pairs
+  - reviewing accepted versus excluded anomalies
+- Provide administration and user settings pages for:
+  - scenario and solver configuration
+  - recommendation thresholds
+  - API and system settings
+  - user preferences and access controls

@@ -29,6 +29,14 @@ class RecommendationConfig:
     plateau_threshold_pct: float = 5.0
     plateau_consecutive_steps: int = 2
     tier2_guardrail_pct: float = 2.0
+    max_defensible_worst_case_round_trip_minutes: float = 180.0
+    max_defensible_load_share: float = 0.70
+    max_defensible_load_imbalance_ratio: float = 2.5
+    min_objective_step_improvement_pct: float = 7.5
+    min_worst_case_step_improvement_pct: float = 10.0
+    min_load_share_step_improvement_pct: float = 10.0
+    min_load_imbalance_step_improvement_pct: float = 10.0
+    min_signals_to_add_site: int = 2
 
 
 @dataclass(slots=True)

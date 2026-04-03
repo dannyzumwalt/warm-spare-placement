@@ -288,6 +288,7 @@ def _short_recommendation_content(
             f"- Tier 1 average round trip: {_fmt_float(selected_row['tier1_avg_drive'])}",
             f"- Tier 2 average round trip: {_fmt_float(selected_row['tier2_avg_drive'])}",
             f"- Overall worst-case round trip: {_fmt_float(selected_row['overall_worst_case_drive'])}",
+            f"- Max load share: {_fmt_float(float(selected_row['max_load_share']) * 100.0)}%",
         ]
     anomalous = feasible_metrics.loc[feasible_metrics["monotonicity_anomaly_flag"] == True, "k"].tolist()
     anomalous_lines = [f"- k={value}" for value in anomalous] or ["- None"]
@@ -526,7 +527,7 @@ def _full_recommendation_content(
             f"Supporting exports: [`recommended_selected_sites.csv`]({site_csv_path.name}) and [`assignments_k_{selected_k}.csv`]({assignments_path.name})",
             "",
             "## Why This Count Was Chosen",
-            "The recommendation is based on where the benefit curve begins to flatten. Lower values of `k` leave too much travel burden concentrated on too few sites. Higher values still improve results, but at a slower rate and with a larger operational footprint.",
+            "The recommendation is not based on the objective curve alone. The engine first finds the smallest site count that is operationally defensible on worst-case round trip and load concentration, then only adds another site when the next step still delivers enough material improvement signals to justify the larger footprint.",
             "",
             f"- Compared with `k={selected_k - 1}`: {_comparison_line(lower_neighbor, selected_row)}",
             f"- Compared with `k={selected_k + 1}`: {_comparison_line(selected_row, higher_neighbor) if higher_neighbor is not None else 'No higher neighboring solution is available for comparison.'}",
@@ -544,6 +545,8 @@ def _full_recommendation_content(
             f"- Recommended site count: `{selected_k}`",
             f"- Average load per spare: `{_fmt_float(selected_row['avg_load_per_spare'])}` offices",
             f"- Maximum load on any spare: `{_fmt_float(selected_row['max_load_per_spare'])}` offices",
+            f"- Maximum load share on any spare: `{_fmt_float(float(selected_row['max_load_share']) * 100.0)}%`",
+            f"- Load imbalance ratio: `{_fmt_float(selected_row['load_imbalance_ratio'])}x`",
             f"- Offices reassigned from `k={selected_k - 1}` to `k={selected_k}`: `{_fmt_float(selected_row['offices_reassigned_from_prev_k'])}`",
             "",
             *methodology_lines,
@@ -623,27 +626,13 @@ def _why_not_neighbor_lines(
         return [
             f"- `k={neighbor_k}` was not chosen because it carries a higher total weighted travel burden (`{_fmt_float(neighbor_row['objective'])}` vs `{_fmt_float(selected_row['objective'])}`) and a worse overall worst-case round trip (`{_fmt_float(neighbor_row['overall_worst_case_drive'])}` vs `{_fmt_float(selected_row['overall_worst_case_drive'])}` minutes).",
         ]
+    note_text = " ".join(recommendation.notes)
     guardrail_note = ""
-    guardrail_hits = _parse_guardrail_hits(recommendation.notes)
-    if neighbor_k in guardrail_hits:
-        guardrail_note = " It was also screened out by the Tier 2 guardrail in this run."
+    if f"k={neighbor_k} was removed from recommendation consideration by the Tier 2 local-anomaly guardrail." in note_text:
+        guardrail_note = " It was also screened out by the Tier 2 local-anomaly guardrail in this run."
     return [
-        f"- `k={neighbor_k}` was not chosen because the recommendation stops at the first defensible elbow rather than automatically selecting a larger footprint. Moving from `k={selected_k}` to `k={neighbor_k}` improves total weighted travel burden from `{_fmt_float(selected_row['objective'])}` to `{_fmt_float(neighbor_row['objective'])}`, but it also commits to an additional spare site.{guardrail_note}",
+        f"- `k={neighbor_k}` was not chosen because the recommendation stops once the next site is no longer justified by enough material improvement signals. Moving from `k={selected_k}` to `k={neighbor_k}` improves total weighted travel burden from `{_fmt_float(selected_row['objective'])}` to `{_fmt_float(neighbor_row['objective'])}`, but it also commits to an additional spare site.{guardrail_note}",
     ]
-
-
-def _parse_guardrail_hits(notes: list[str]) -> set[int]:
-    for note in notes:
-        if "removed these k values from consideration:" not in note:
-            continue
-        values = note.rsplit(":", 1)[-1]
-        hits = set()
-        for part in values.split(","):
-            stripped = part.strip()
-            if stripped.isdigit():
-                hits.add(int(stripped))
-        return hits
-    return set()
 
 
 def _chart_section_lines(output_dir: Path) -> list[str]:
@@ -833,10 +822,11 @@ def _methodology_section_lines(
         "Each office tier carries a configurable weight. Higher-priority offices contribute more to the weighted travel burden, so the model prefers improvements for those locations when tradeoffs are required. Tier 4 offices remain demand points but are not eligible to be selected as warm spare sites in the current V2 design.",
         "",
         "### How the recommendation was chosen",
-        "Optimization and recommendation are separate steps. First, the solver finds the best solution for each tested `k`. Second, the recommendation layer compares those solved points using diminishing-returns logic, neighboring `k` comparisons, and business guardrails. This keeps the analysis transparent: the report can show both the best solution at each site count and why the final recommendation stopped where it did.",
+        "Optimization and recommendation are separate steps. First, the solver finds the best solution for each tested `k`. Second, the recommendation layer applies operational admissibility gates and then uses stepwise business signals to decide whether each additional spare site is justified. This keeps the analysis transparent: the report can show both the best solution at each site count and why the final recommendation stopped where it did.",
         "",
         f"- Recommendation rule used in this run: `{recommendation.chosen_rule}`",
-        "- The objective curve and worst-case charts are used to show where additional sites produce smaller incremental benefit.",
+        "- A site count is not recommendation-eligible unless it stays within the configured worst-case round-trip and load-concentration limits.",
+        "- After the first defensible site count is found, the next site is only added when enough material signals still improve, using objective, worst-case round trip, and load concentration.",
         "- Neighboring `k` comparisons are included so the tradeoff between one fewer or one more spare site is explicit.",
         "",
         "### Anomaly handling and scenario screening",
@@ -844,7 +834,7 @@ def _methodology_section_lines(
         "Static baseline scenarios are used as a reasonableness check on live traffic snapshots so an accident, closure, holiday effect, or abnormal day does not silently distort the planning recommendation.",
         "",
         "### What this analysis does not yet model",
-        "- The current optimization is uncapacitated, so it does not directly balance assigned load across spare sites.",
+        "- The current optimization is still uncapacitated, so load balance is enforced in the recommendation layer rather than directly in the solver objective.",
         "- It does not model cabinet capacity or multi-spare capacity at a single site.",
         "- The quality of the recommendation still depends on clean tier assignments, address quality, and representative travel-time scenarios.",
     ]

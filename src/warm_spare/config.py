@@ -153,6 +153,14 @@ def validate_config(config: AppConfig) -> None:
         raise ConfigError("tier_weights keys must be 1, 2, 3, or 4")
     if any(tier not in {1, 2, 3, 4} for tier in config.candidate_tiers):
         raise ConfigError("candidate_tiers values must be 1, 2, 3, or 4")
+    if config.recommendation.max_defensible_worst_case_round_trip_minutes <= 0:
+        raise ConfigError("max_defensible_worst_case_round_trip_minutes must be positive")
+    if not 0 < config.recommendation.max_defensible_load_share <= 1:
+        raise ConfigError("max_defensible_load_share must be in (0, 1]")
+    if config.recommendation.max_defensible_load_imbalance_ratio <= 0:
+        raise ConfigError("max_defensible_load_imbalance_ratio must be positive")
+    if config.recommendation.min_signals_to_add_site <= 0:
+        raise ConfigError("min_signals_to_add_site must be positive")
 
     active_weights = config.active_weights()
     missing = [name for name in config.scenario_names if name not in active_weights]

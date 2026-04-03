@@ -13,7 +13,7 @@ scenario_names:
   - weekend_noon
   - weekend_6pm
 
-k_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+k_values: [1, 2, 3, 4, 5, 6, 7, 8]
 sla_minutes: 120
 candidate_tiers: [1, 2, 3]
 
@@ -48,7 +48,7 @@ scenario_weight_profiles:
 active_scenario_profile: balanced_default
 
 tier_weights:
-  1: 10
+  1: 6
   2: 6
   3: 3
   4: 1
@@ -63,6 +63,14 @@ recommendation:
   plateau_threshold_pct: 5.0
   plateau_consecutive_steps: 2
   tier2_guardrail_pct: 2.0
+  max_defensible_worst_case_round_trip_minutes: 180.0
+  max_defensible_load_share: 0.70
+  max_defensible_load_imbalance_ratio: 2.5
+  min_objective_step_improvement_pct: 7.5
+  min_worst_case_step_improvement_pct: 10.0
+  min_load_share_step_improvement_pct: 10.0
+  min_load_imbalance_step_improvement_pct: 10.0
+  min_signals_to_add_site: 2
 
 artifacts:
   persist_preprocessed_csv: true

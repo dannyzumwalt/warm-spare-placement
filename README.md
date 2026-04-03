@@ -199,6 +199,35 @@ Optional reporting flag for `optimize`, `report`, and `run`:
 - `run` now writes both `recommendation.md` and a self-contained `recommendation.html`; if `GOOGLE_MAPS_API_KEY` is set and Maps Static API is enabled, the report map uses a Google roadway basemap.
 - `recommendation.html` includes the market overview map plus one zoomed detail map per selected warm spare, with the spare address and assigned-office tier counts beside each detail map.
 
+## Recommendation methodology
+
+V2 now treats recommendation as a separate policy layer on top of the per-`k` optimization results.
+
+1. The solver finds the best solution for each tested `k`.
+2. The recommendation layer removes any `k` that is not operationally defensible.
+3. Starting from the first defensible `k`, it only adds another spare site when the next step still produces enough material improvement signals.
+
+The recommendation is not allowed to use the objective curve alone. By default, a `k` is not recommendation-eligible if any of these are true:
+
+- overall worst-case round trip exceeds `180` minutes
+- maximum load share on a single spare exceeds `70%`
+- load imbalance ratio exceeds `2.5x` the average spare load
+
+After the first defensible `k` is found, the next site is only added when at least two of these signals still improve materially:
+
+- total weighted travel burden
+- overall worst-case round trip
+- maximum load share
+- load imbalance ratio
+
+Default V2 planning defaults in `config/default.yaml` are now:
+
+- `k_values: [1, 2, 3, 4, 5, 6, 7, 8]`
+- Tier 1 weight `6`
+- Tier 2 weight `6`
+
+Tune the `recommendation:` block in the config if a market needs stricter or looser defensibility thresholds.
+
 ## Validation and reporting outputs
 
 Depending on mode, run directories may include:
@@ -222,6 +251,14 @@ Depending on mode, run directories may include:
 - `recommendation.html`
 - `recommendation_<market>.html`
 - plot PNGs
+
+`metrics_by_k.csv` also includes load-concentration metrics used by the recommender, including:
+
+- `max_load_share`
+- `load_imbalance_ratio`
+- `overall_worst_case_improvement_pct_from_prev_k`
+- `max_load_share_improvement_pct_from_prev_k`
+- `load_imbalance_improvement_pct_from_prev_k`
 
 ## Potential V3 and V4 enhancements
 

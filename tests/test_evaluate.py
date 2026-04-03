@@ -13,7 +13,7 @@ from tests.test_support import write_analysis_fixture
 
 
 class EvaluateTests(unittest.TestCase):
-    def test_metrics_include_round_trip_columns(self) -> None:
+    def test_metrics_include_round_trip_and_load_columns(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path, _ = write_analysis_fixture(Path(tmp))
             config = load_config(config_path)
@@ -26,7 +26,15 @@ class EvaluateTests(unittest.TestCase):
                 config.sla_minutes,
                 config.effective_round_trip_sla_minutes(),
             )
-            expected = {"overall_worst_case_drive", "tier1_avg_drive", "site_overlap_with_prev_k"}
+            expected = {
+                "overall_worst_case_drive",
+                "tier1_avg_drive",
+                "site_overlap_with_prev_k",
+                "max_load_share",
+                "load_imbalance_ratio",
+                "overall_worst_case_improvement_pct_from_prev_k",
+                "max_load_share_improvement_pct_from_prev_k",
+            }
             self.assertTrue(expected.issubset(set(metrics.columns)))
 
 

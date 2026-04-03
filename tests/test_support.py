@@ -16,6 +16,7 @@ def write_analysis_fixture(
     anomalous_realtime: bool = False,
     cache_db_path: str | None = None,
     accepted_anomaly_scenarios: list[str] | None = None,
+    include_coordinates: bool = False,
 ) -> tuple[Path, Path]:
     data_dir = base_dir / "data" / "input"
     scenarios_dir = data_dir / "scenarios"
@@ -30,6 +31,16 @@ def write_analysis_fixture(
         ]
     )
     offices.to_csv(data_dir / "offices.csv", index=False)
+    coordinates_path = data_dir / "office_coordinates.csv"
+    if include_coordinates:
+        pd.DataFrame(
+            [
+                {"office_id": "A", "input_address": "1 Main St, Alpha, ST", "normalized_address": "1 Main St, Alpha, ST", "latitude": 33.75, "longitude": -84.39, "geocode_status": "OK"},
+                {"office_id": "B", "input_address": "2 Main St, Beta, ST", "normalized_address": "2 Main St, Beta, ST", "latitude": 33.95, "longitude": -84.55, "geocode_status": "OK"},
+                {"office_id": "C", "input_address": "3 Main St, Gamma, ST", "normalized_address": "3 Main St, Gamma, ST", "latitude": 33.77, "longitude": -84.30, "geocode_status": "OK"},
+                {"office_id": "D", "input_address": "4 Main St, Delta, ST", "normalized_address": "4 Main St, Delta, ST", "latitude": 34.07, "longitude": -84.29, "geocode_status": "OK"},
+            ]
+        ).to_csv(coordinates_path, index=False)
 
     office_to_candidate_static = pd.DataFrame(
         [
@@ -69,6 +80,7 @@ def write_analysis_fixture(
             "offices_csv": str(data_dir / "offices.csv"),
             "scenarios_dir": str(scenarios_dir),
             "output_root": str(base_dir / "outputs"),
+            "office_coordinates_csv": str(coordinates_path) if include_coordinates else None,
         },
         "scenario_names": SCENARIOS,
         "k_values": [1, 2, 3],
@@ -87,6 +99,7 @@ def write_analysis_fixture(
             "provider": "google_distance_matrix",
             "api_key_env_var": "GOOGLE_MAPS_API_KEY",
             "cache_db_path": cache_db_path or str(base_dir / "matrix_cache.sqlite"),
+            "geocode_cache_db_path": str(base_dir / "geocode_cache.sqlite"),
             "eligible_spare_tiers": [1, 2, 3],
             "accepted_anomaly_scenarios": accepted_anomaly_scenarios or [],
             "retry_policy": {"max_attempts": 2, "initial_backoff_seconds": 0.0, "max_backoff_seconds": 0.0, "jitter_seconds": 0.0},
@@ -206,3 +219,30 @@ def build_provider_responses(*, anomalous_realtime: bool = False) -> dict[tuple[
         if key[0] == "static_baseline":
             responses[("realtime_now", key[1], key[2])] = value + realtime_delta
     return responses
+
+
+class FakeGeocoder:
+    def __init__(self, responses: dict[str, tuple[float, float]]) -> None:
+        self.responses = responses
+        self.calls: list[str] = []
+
+    def geocode(self, office_id: str, address: str) -> dict[str, object]:
+        self.calls.append(office_id)
+        latitude, longitude = self.responses[office_id]
+        return {
+            "office_id": office_id,
+            "input_address": address,
+            "normalized_address": address,
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+            "geocode_status": "OK",
+        }
+
+
+def build_geocoder_responses() -> dict[str, tuple[float, float]]:
+    return {
+        "A": (33.75, -84.39),
+        "B": (33.95, -84.55),
+        "C": (33.77, -84.30),
+        "D": (34.07, -84.29),
+    }

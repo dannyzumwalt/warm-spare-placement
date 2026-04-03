@@ -7,7 +7,7 @@ CLI application for building drive-time datasets from office addresses, validati
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e '.[plotting]'
+pip install -r requirements.txt
 ```
 
 ## Core workflows
@@ -34,6 +34,7 @@ This writes a timestamped matrix-build directory under the market output root an
 - round-trip matrices: `__round_trip.csv`
 - `candidate_sites.csv`
 - `office_manifest.csv`
+- `office_coordinates.csv`
 - `build_report.md`
 - `build_manifest.json`
 - `analysis_config.yaml`
@@ -67,12 +68,34 @@ warm-spare build-matrix \
   --accept-quarantined-scenario realtime_now
 ```
 
+For a first-pass static-only collection that skips realtime scenarios entirely:
+
+```bash
+warm-spare build-matrix \
+  --config config/v2_base.yaml \
+  --market example \
+  --static-only
+```
+
 ### 2. Run analysis on generated matrices
 
 Use the generated config from the matrix-build output directory:
 
 ```bash
 warm-spare run --config outputs/matrix_builds/<timestamp>_<market>/analysis_config.yaml
+```
+
+By default, `run` writes a full narrative recommendation report intended for planning and leadership review. It emits both:
+
+- `recommendation.md` for Markdown/plain-text workflows
+- `recommendation.html` as a self-contained browser-friendly report with embedded images
+
+If you only want the compact recommendation summary, add:
+
+```bash
+warm-spare run \
+  --config outputs/matrix_builds/<timestamp>_<market>/analysis_config.yaml \
+  --short-report
 ```
 
 ## Input contracts
@@ -113,6 +136,7 @@ Builds directional and round-trip candidate matrices from office addresses and m
 Required extras:
 
 - `--market <short_name>` or `--market-file <path>`
+- optional: `--static-only`
 - optional: `--resolve-quarantine-from <build_dir_or_manifest>`
 - optional: `--accept-quarantined-scenario <scenario_id>` repeated as needed
 
@@ -151,6 +175,10 @@ Current behavior matches `optimize`.
 
 Current behavior matches `optimize` and is the default end-to-end analysis command.
 
+Optional reporting flag for `optimize`, `report`, and `run`:
+
+- `--short-report`: write the compact recommendation summary instead of the full narrative report
+
 ## V2 configuration files
 
 - `config/v2_base.yaml`: sample v2 config with static baseline plus realtime-now scenario definitions
@@ -166,6 +194,9 @@ Current behavior matches `optimize` and is the default end-to-end analysis comma
 - Realtime scenarios can be quarantined automatically and excluded from the generated analysis config.
 - Pair anomaly screening uses the largest of three thresholds: `30` minutes, `50%` of static baseline, or `3σ` of the realtime-minus-static delta distribution for that scenario.
 - Quarantined scenarios can be re-sampled later with `--resolve-quarantine-from` or explicitly accepted with `--accept-quarantined-scenario`.
+- `build-matrix` now emits live progress to the terminal while collecting each scenario/direction.
+- `build-matrix` now geocodes office addresses once, caches coordinates locally, and writes `office_coordinates.csv` for later report mapping.
+- `run` now writes both `recommendation.md` and a self-contained `recommendation.html`; if `GOOGLE_MAPS_API_KEY` is set and Maps Static API is enabled, the report map uses a Google roadway basemap.
 
 ## Validation and reporting outputs
 
@@ -178,8 +209,12 @@ Depending on mode, run directories may include:
 - `d_avg.csv`
 - `d_max.csv`
 - `feasibility_mask.csv`
+- `one_way_dmax.csv`
 - `metrics_by_k.csv`
 - `selected_sites_by_k.csv`
+- `recommended_selected_sites.csv`
 - `assignments_k_<k>.csv`
+- `recommended_sites_map.png`
 - `recommendation.md`
+- `recommendation.html`
 - plot PNGs

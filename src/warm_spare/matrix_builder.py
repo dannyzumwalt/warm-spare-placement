@@ -5,15 +5,17 @@ import math
 import os
 import random
 import sqlite3
+import sys
 import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import pandas as pd
 import yaml
 
+from warm_spare.geocode import Geocoder, create_geocoder, geocode_offices
 from warm_spare.io import ValidationError, load_offices_frame
 from warm_spare.models import (
     AppConfig,
@@ -45,7 +47,7 @@ class GoogleDistanceMatrixProvider(DriveTimeProvider):
             import googlemaps  # type: ignore
         except ImportError as exc:
             raise ProviderError(
-                "googlemaps package is required for build-matrix. Install project dependencies first."
+                "googlemaps package is required for build-matrix. Install dependencies with `pip install -r requirements.txt`."
             ) from exc
         self._gmaps = googlemaps.Client(key=api_key)
 
@@ -111,18 +113,24 @@ def build_matrix_dataset(
     market: MarketConfig,
     *,
     provider: DriveTimeProvider | None = None,
+    geocoder: Geocoder | None = None,
     resolve_quarantine_from: str | Path | None = None,
     accept_quarantined_scenarios: set[str] | None = None,
+    static_only: bool = False,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> MatrixBuildResult:
     if config.matrix_builder is None:
         raise ValidationError("matrix_builder configuration is required for build-matrix")
 
     builder_config = config.matrix_builder
     provider = provider or create_provider(builder_config)
+    geocoder = geocoder or create_geocoder(builder_config)
+    progress = progress_callback or _default_progress_callback
     offices = load_offices_frame(Path(market.offices_csv), require_address=True)
     candidate_offices = offices.loc[offices["tier"].isin(market.eligible_spare_tiers)].copy()
     if candidate_offices.empty:
         raise ValidationError("No candidate offices remain after applying market eligible_spare_tiers")
+    selected_scenarios = _select_build_scenarios(builder_config.scenarios, static_only=static_only)
 
     accepted_scenarios = set(builder_config.accepted_anomaly_scenarios)
     if accept_quarantined_scenarios:
@@ -143,12 +151,30 @@ def build_matrix_dataset(
     candidate_offices = candidate_offices.reset_index(drop=True)
     offices.to_csv(output_dir / "office_manifest.csv", index=False)
     candidate_offices.to_csv(output_dir / "candidate_sites.csv", index=False)
+    progress(f"Geocoding {len(offices)} offices for report mapping")
+    coordinates_frame, geocode_warnings = geocode_offices(
+        offices,
+        cache_path=_resolve_cache_path(builder_config.geocode_cache_db_path),
+        geocoder=geocoder,
+    )
+    office_coordinates_path = output_dir / "office_coordinates.csv"
+    coordinates_frame.to_csv(office_coordinates_path, index=False)
+    if geocode_warnings:
+        progress(f"Geocode warnings: {len(geocode_warnings)} offices did not resolve cleanly")
+    else:
+        progress("Geocoding complete: all offices resolved successfully")
+    progress(
+        "Starting build-matrix for "
+        f"{market.market_id}: offices={len(offices)}, candidates={len(candidate_offices)}, "
+        f"scenarios={', '.join(s.id for s in selected_scenarios)}, output_dir={output_dir}"
+    )
 
     unresolved_rows: list[dict[str, object]] = []
     directional_gap_summary: dict[str, float] = {}
     scenario_row_stats: dict[str, dict[str, float]] = {}
-    for scenario in builder_config.scenarios:
+    for scenario in selected_scenarios:
         refresh_pairs = resolution_targets.get(scenario.id, set())
+        progress(f"[{scenario.id}] collecting office_to_candidate")
         office_to_candidate, otc_unresolved = _collect_directional_matrix(
             market=market,
             provider=provider,
@@ -159,7 +185,9 @@ def build_matrix_dataset(
             candidate_offices=candidate_offices,
             direction="office_to_candidate",
             refresh_pairs=refresh_pairs,
+            progress_callback=progress,
         )
+        progress(f"[{scenario.id}] collecting candidate_to_office")
         candidate_to_office, cto_unresolved = _collect_directional_matrix(
             market=market,
             provider=provider,
@@ -170,6 +198,7 @@ def build_matrix_dataset(
             candidate_offices=candidate_offices,
             direction="candidate_to_office",
             refresh_pairs=refresh_pairs,
+            progress_callback=progress,
         )
         unresolved_rows.extend(otc_unresolved)
         unresolved_rows.extend(cto_unresolved)
@@ -186,6 +215,10 @@ def build_matrix_dataset(
             "max": float(round_trip.to_numpy(dtype=float).max()),
             "mean_directional_gap": directional_gap_summary[scenario.id],
         }
+        progress(
+            f"[{scenario.id}] wrote directional and round-trip matrices "
+            f"(unresolved_pairs_so_far={len(_dedupe_unresolved(unresolved_rows))})"
+        )
 
     unresolved_pairs_path: Path | None = None
     if unresolved_rows:
@@ -194,7 +227,7 @@ def build_matrix_dataset(
 
     anomaly_summary, quarantined_scenarios, anomaly_rows = _detect_anomalies(
         scenarios_dir=scenarios_dir,
-        scenarios=builder_config.scenarios,
+        scenarios=selected_scenarios,
         offices=offices,
         anomaly_config=builder_config.anomaly,
         accepted_scenarios=accepted_scenarios,
@@ -204,7 +237,7 @@ def build_matrix_dataset(
     ]
     included_scenarios = [
         scenario.id
-        for scenario in builder_config.scenarios
+        for scenario in selected_scenarios
         if scenario.id not in effective_quarantined_scenarios
     ]
     analysis_config_path = _write_generated_analysis_config(
@@ -212,6 +245,7 @@ def build_matrix_dataset(
         market=market,
         output_dir=output_dir,
         included_scenarios=included_scenarios,
+        office_coordinates_path=office_coordinates_path,
     )
 
     quarantined_pairs_path, quarantine_manifest_path = _write_quarantine_outputs(
@@ -227,7 +261,7 @@ def build_matrix_dataset(
         json.dumps(
             {
                 "market": market.to_dict(),
-                "scenarios": [asdict(scenario) for scenario in builder_config.scenarios],
+                "scenarios": [asdict(scenario) for scenario in selected_scenarios],
                 "quarantined_scenarios": effective_quarantined_scenarios,
                 "accepted_quarantined_scenarios": sorted(
                     scenario_id for scenario_id in quarantined_scenarios if scenario_id in accepted_scenarios
@@ -253,7 +287,7 @@ def build_matrix_dataset(
     build_report_path = _write_build_report(
         output_dir=output_dir,
         market=market,
-        scenarios=builder_config.scenarios,
+        scenarios=selected_scenarios,
         unresolved_rows=unresolved_rows,
         quarantined_scenarios=effective_quarantined_scenarios,
         accepted_quarantined_scenarios=sorted(
@@ -262,14 +296,21 @@ def build_matrix_dataset(
         directional_gap_summary=directional_gap_summary,
         anomaly_summary=anomaly_summary,
         analysis_config_path=analysis_config_path,
+        office_coordinates_path=office_coordinates_path,
         cache_path=cache_path,
+        geocode_warnings=geocode_warnings,
         quarantined_pairs_path=quarantined_pairs_path,
         quarantine_manifest_path=quarantine_manifest_path,
         resolution_source=resolve_quarantine_from,
     )
+    progress(
+        f"Completed build-matrix for {market.market_id}: success={len(unresolved_rows) == 0}, "
+        f"quarantined={len(effective_quarantined_scenarios)}, unresolved_pairs={len(unresolved_rows)}"
+    )
     return MatrixBuildResult(
         output_dir=output_dir,
         analysis_config_path=analysis_config_path,
+        office_coordinates_path=office_coordinates_path,
         unresolved_pairs_path=unresolved_pairs_path,
         quarantined_pairs_path=quarantined_pairs_path,
         quarantine_manifest_path=quarantine_manifest_path,
@@ -384,6 +425,7 @@ def _collect_directional_matrix(
     candidate_offices: pd.DataFrame,
     direction: str,
     refresh_pairs: set[tuple[str, str]],
+    progress_callback: Callable[[str], None] | None,
 ) -> tuple[pd.DataFrame, list[dict[str, object]]]:
     office_ids = offices["office_id"].astype(str).tolist()
     candidate_ids = candidate_offices["office_id"].astype(str).tolist()
@@ -402,7 +444,9 @@ def _collect_directional_matrix(
             builder_config.batch_limits.max_elements_per_request,
         )
 
-    for office_id in office_ids:
+    total_pairs = len(office_ids) * len(candidate_ids)
+    progress_every = max(1, len(office_ids) // 10)
+    for office_idx, office_id in enumerate(office_ids, start=1):
         chunks = list(_chunk_pairs(candidate_ids, chunk_size))
         for chunk_ids in chunks:
             if direction == "office_to_candidate":
@@ -457,6 +501,12 @@ def _collect_directional_matrix(
                     matrix.loc[office_id, candidate_id] = cache.get_success(
                         market.market_id, scenario.id, direction, candidate_id, office_id
                     )
+        if progress_callback and (office_idx == len(office_ids) or office_idx % progress_every == 0):
+            filled_pairs = int(matrix.notna().to_numpy().sum())
+            progress_callback(
+                f"[{scenario.id}] {direction}: offices={office_idx}/{len(office_ids)}, "
+                f"filled_pairs={filled_pairs}/{total_pairs}"
+            )
 
     if matrix.isna().any().any():
         for office_id in office_ids:
@@ -559,6 +609,23 @@ def _sleep_backoff(builder_config: MatrixBuilderConfig, attempt: int) -> None:
 def _chunk_pairs(values: list[str], chunk_size: int) -> Iterable[list[str]]:
     for idx in range(0, len(values), chunk_size):
         yield values[idx : idx + chunk_size]
+
+
+def _default_progress_callback(message: str) -> None:
+    print(message, file=sys.stderr, flush=True)
+
+
+def _select_build_scenarios(
+    scenarios: list[ScenarioDefinition],
+    *,
+    static_only: bool,
+) -> list[ScenarioDefinition]:
+    if not static_only:
+        return list(scenarios)
+    static_scenarios = [scenario for scenario in scenarios if scenario.departure_policy == "none"]
+    if not static_scenarios:
+        raise ValidationError("No static scenarios are configured, so --static-only cannot be used")
+    return static_scenarios
 
 
 def _dedupe_unresolved(rows: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -691,11 +758,13 @@ def _write_generated_analysis_config(
     market: MarketConfig,
     output_dir: Path,
     included_scenarios: list[str],
+    office_coordinates_path: Path,
 ) -> Path:
     config_dict = base_config.to_dict()
     config_dict["paths"]["offices_csv"] = market.offices_csv
     config_dict["paths"]["scenarios_dir"] = str(output_dir / "scenarios")
     config_dict["paths"]["output_root"] = market.output_root
+    config_dict["paths"]["office_coordinates_csv"] = str(office_coordinates_path)
     config_dict["scenario_names"] = included_scenarios
     config_dict["candidate_tiers"] = list(market.eligible_spare_tiers)
     filtered_profiles: dict[str, dict[str, float]] = {}
@@ -771,7 +840,9 @@ def _write_build_report(
     directional_gap_summary: dict[str, float],
     anomaly_summary: dict[str, dict[str, float | str | bool]],
     analysis_config_path: Path,
+    office_coordinates_path: Path,
     cache_path: Path,
+    geocode_warnings: list[str],
     quarantined_pairs_path: Path | None,
     quarantine_manifest_path: Path | None,
     resolution_source: str | Path | None,
@@ -786,13 +857,25 @@ def _write_build_report(
         f"- Accepted quarantined scenarios: {', '.join(accepted_quarantined_scenarios) if accepted_quarantined_scenarios else 'None'}",
         f"- Unresolved pair count: {len(unresolved_rows)}",
         f"- Generated analysis config: {analysis_config_path}",
+        f"- Office coordinates: {office_coordinates_path}",
         f"- Cache DB: {cache_path}",
         f"- Quarantined pairs report: {quarantined_pairs_path if quarantined_pairs_path else 'None'}",
         f"- Quarantine manifest: {quarantine_manifest_path if quarantine_manifest_path else 'None'}",
         f"- Resolution source: {resolution_source if resolution_source else 'None'}",
         "",
-        "## Directional Asymmetry",
+        "## Geocoding",
+        f"- Office coordinates artifact: {office_coordinates_path}",
+        f"- Geocode warning count: {len(geocode_warnings)}",
     ]
+    if geocode_warnings:
+        lines.extend(f"- {warning}" for warning in geocode_warnings[:20])
+        if len(geocode_warnings) > 20:
+            lines.append(f"- ... and {len(geocode_warnings) - 20} more")
+
+    lines.extend([
+        "",
+        "## Directional Asymmetry",
+    ])
     for scenario_id, value in directional_gap_summary.items():
         lines.append(f"- {scenario_id}: mean absolute directional gap = {value:.2f} minutes")
 

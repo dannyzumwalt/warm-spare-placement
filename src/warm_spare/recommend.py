@@ -36,7 +36,7 @@ def recommend_k(metrics: pd.DataFrame, config: RecommendationConfig) -> Recommen
     alternatives = _top_alternatives(feasible, knee_candidate)
     if blocked_ks:
         notes.append(
-            "Tier 2 guardrail removed these k values from consideration: "
+            "Tier 2 local-anomaly guardrail removed these k values from consideration: "
             + ", ".join(str(value) for value in sorted(blocked_ks))
         )
     notes.append("Plateau rule was not satisfied; selected the strongest knee in the objective curve.")
@@ -75,21 +75,24 @@ def _find_plateau_candidate(
     return None
 
 
-def _tier2_degrades_materially(current: float, next_value: float, threshold_pct: float) -> bool:
-    if any(math.isnan(value) for value in [current, next_value]):
+def _tier2_degrades_materially(current: float, comparison_value: float, threshold_pct: float) -> bool:
+    if any(math.isnan(value) for value in [current, comparison_value]):
         return False
-    if next_value >= current:
+    if comparison_value >= current:
         return False
-    reduction_pct = (current - next_value) / current * 100.0
+    reduction_pct = (current - comparison_value) / current * 100.0
     return reduction_pct > threshold_pct
 
 
 def _blocked_by_tier2_guardrail(feasible: pd.DataFrame, threshold_pct: float) -> set[int]:
     blocked: set[int] = set()
-    for idx in range(len(feasible) - 1):
+    for idx in range(1, len(feasible) - 1):
         current = feasible.iloc[idx]
+        previous = feasible.iloc[idx - 1]
         nxt = feasible.iloc[idx + 1]
-        if _tier2_degrades_materially(current["tier2_avg_drive"], nxt["tier2_avg_drive"], threshold_pct):
+        if _tier2_degrades_materially(
+            current["tier2_avg_drive"], previous["tier2_avg_drive"], threshold_pct
+        ) and _tier2_degrades_materially(current["tier2_avg_drive"], nxt["tier2_avg_drive"], threshold_pct):
             blocked.add(int(current["k"]))
     return blocked
 

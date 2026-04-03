@@ -9,7 +9,13 @@ import pandas as pd
 
 from warm_spare.config import load_config, resolve_market_config
 from warm_spare.matrix_builder import build_matrix_dataset
-from tests.test_support import FakeProvider, build_provider_responses, write_analysis_fixture
+from tests.test_support import (
+    FakeGeocoder,
+    FakeProvider,
+    build_geocoder_responses,
+    build_provider_responses,
+    write_analysis_fixture,
+)
 
 
 class MatrixBuilderTests(unittest.TestCase):
@@ -20,15 +26,46 @@ class MatrixBuilderTests(unittest.TestCase):
             config = load_config(config_path)
             market = resolve_market_config(None, str(market_path))
             provider = FakeProvider(build_provider_responses())
-            result = build_matrix_dataset(config, market, provider=provider)
+            geocoder = FakeGeocoder(build_geocoder_responses())
+            result = build_matrix_dataset(config, market, provider=provider, geocoder=geocoder)
             self.assertTrue(result.success)
             self.assertTrue((result.output_dir / "scenarios" / "static_baseline__office_to_candidate.csv").exists())
             self.assertTrue((result.output_dir / "scenarios" / "static_baseline__candidate_to_office.csv").exists())
             self.assertTrue((result.output_dir / "scenarios" / "static_baseline__round_trip.csv").exists())
+            self.assertTrue((result.output_dir / "office_coordinates.csv").exists())
             analysis_config = Path(result.analysis_config_path).read_text(encoding="utf-8")
             self.assertIn("scenario_names", analysis_config)
+            self.assertIn("office_coordinates_csv", analysis_config)
             self.assertTrue(any(call[1] == "now" for call in provider.calls))
             self.assertTrue(any(call[1] == "none" for call in provider.calls))
+            self.assertEqual(set(geocoder.calls), {"A", "B", "C", "D"})
+
+    def test_build_matrix_static_only_skips_realtime_scenarios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            config_path, market_path = write_analysis_fixture(tmp_path)
+            config = load_config(config_path)
+            market = resolve_market_config(None, str(market_path))
+            provider = FakeProvider(build_provider_responses())
+            geocoder = FakeGeocoder(build_geocoder_responses())
+            messages: list[str] = []
+            result = build_matrix_dataset(
+                config,
+                market,
+                provider=provider,
+                geocoder=geocoder,
+                static_only=True,
+                progress_callback=messages.append,
+            )
+            self.assertTrue(result.success)
+            self.assertTrue((result.output_dir / "scenarios" / "static_baseline__round_trip.csv").exists())
+            self.assertFalse((result.output_dir / "scenarios" / "realtime_now__round_trip.csv").exists())
+            self.assertTrue(all(call[0] == "static_baseline" for call in provider.calls))
+            analysis_config = Path(result.analysis_config_path).read_text(encoding="utf-8")
+            self.assertIn("static_baseline", analysis_config)
+            self.assertNotIn("realtime_now: 0.5", analysis_config)
+            self.assertTrue(any("Starting build-matrix" in message for message in messages))
+            self.assertTrue(any("office_to_candidate" in message for message in messages))
 
     def test_build_matrix_quarantines_anomalous_realtime_scenario(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -37,7 +74,8 @@ class MatrixBuilderTests(unittest.TestCase):
             config = load_config(config_path)
             market = resolve_market_config(None, str(market_path))
             provider = FakeProvider(build_provider_responses(anomalous_realtime=True))
-            result = build_matrix_dataset(config, market, provider=provider)
+            geocoder = FakeGeocoder(build_geocoder_responses())
+            result = build_matrix_dataset(config, market, provider=provider, geocoder=geocoder)
             self.assertIn("realtime_now", result.quarantined_scenarios)
             self.assertIsNotNone(result.quarantined_pairs_path)
             self.assertTrue(Path(result.quarantined_pairs_path).exists())
@@ -51,7 +89,8 @@ class MatrixBuilderTests(unittest.TestCase):
             config = load_config(config_path)
             market = resolve_market_config(None, str(market_path))
             provider = FakeProvider(build_provider_responses(), fail_once={("static_baseline", "A", "B")})
-            result = build_matrix_dataset(config, market, provider=provider)
+            geocoder = FakeGeocoder(build_geocoder_responses())
+            result = build_matrix_dataset(config, market, provider=provider, geocoder=geocoder)
             self.assertTrue(result.success)
             round_trip = pd.read_csv(result.output_dir / "scenarios" / "static_baseline__round_trip.csv", index_col=0)
             self.assertGreater(round_trip.loc["A", "B"], 0)
@@ -66,14 +105,17 @@ class MatrixBuilderTests(unittest.TestCase):
                 config = load_config(config_path)
                 market = resolve_market_config(None, str(market_path))
                 first_provider = FakeProvider(build_provider_responses())
-                first_result = build_matrix_dataset(config, market, provider=first_provider)
+                geocoder = FakeGeocoder(build_geocoder_responses())
+                first_result = build_matrix_dataset(config, market, provider=first_provider, geocoder=geocoder)
                 self.assertTrue(first_result.success)
 
                 second_provider = FakeProvider({})
-                second_result = build_matrix_dataset(config, market, provider=second_provider)
+                second_geocoder = FakeGeocoder(build_geocoder_responses())
+                second_result = build_matrix_dataset(config, market, provider=second_provider, geocoder=second_geocoder)
                 self.assertTrue(second_result.success)
                 self.assertNotEqual(first_result.output_dir, second_result.output_dir)
                 self.assertEqual(second_provider.calls, [])
+                self.assertEqual(second_geocoder.calls, [])
             finally:
                 os.chdir(previous_cwd)
 
@@ -84,10 +126,12 @@ class MatrixBuilderTests(unittest.TestCase):
             config = load_config(config_path)
             market = resolve_market_config(None, str(market_path))
             provider = FakeProvider(build_provider_responses(anomalous_realtime=True))
+            geocoder = FakeGeocoder(build_geocoder_responses())
             result = build_matrix_dataset(
                 config,
                 market,
                 provider=provider,
+                geocoder=geocoder,
                 accept_quarantined_scenarios={"realtime_now"},
             )
             self.assertEqual(result.quarantined_scenarios, [])
@@ -110,14 +154,17 @@ class MatrixBuilderTests(unittest.TestCase):
                 config = load_config(config_path)
                 market = resolve_market_config(None, str(market_path))
                 first_provider = FakeProvider(build_provider_responses(anomalous_realtime=True))
-                first_result = build_matrix_dataset(config, market, provider=first_provider)
+                geocoder = FakeGeocoder(build_geocoder_responses())
+                first_result = build_matrix_dataset(config, market, provider=first_provider, geocoder=geocoder)
                 self.assertIn("realtime_now", first_result.quarantined_scenarios)
 
                 second_provider = FakeProvider(build_provider_responses(anomalous_realtime=False))
+                second_geocoder = FakeGeocoder(build_geocoder_responses())
                 second_result = build_matrix_dataset(
                     config,
                     market,
                     provider=second_provider,
+                    geocoder=second_geocoder,
                     resolve_quarantine_from=first_result.output_dir,
                 )
                 self.assertTrue(second_result.success)
@@ -141,12 +188,14 @@ class MatrixBuilderTests(unittest.TestCase):
             responses = build_provider_responses(anomalous_realtime=True)
             responses.pop(("static_baseline", "A", "B"))
             provider = FakeProvider(responses)
-            result = build_matrix_dataset(config, market, provider=provider)
+            geocoder = FakeGeocoder(build_geocoder_responses())
+            result = build_matrix_dataset(config, market, provider=provider, geocoder=geocoder)
             self.assertFalse(result.success)
             build_report = Path(result.build_report_path).read_text(encoding="utf-8")
             self.assertIn("Broad scenario anomaly", build_report)
             self.assertIn("Request/API failure", build_report)
             self.assertIn("Quarantine Targets", build_report)
+            self.assertIn("Office coordinates artifact", build_report)
 
 
 if __name__ == "__main__":

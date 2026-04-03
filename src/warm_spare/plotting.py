@@ -13,8 +13,8 @@ def generate_plots(metrics: pd.DataFrame, output_dir: Path) -> list[Path]:
         import matplotlib.pyplot as plt  # type: ignore
     except ImportError as exc:
         raise RuntimeError(
-            "Plot generation requires the optional plotting dependencies. "
-            "Install with `pip install -e .[plotting]`."
+            "Plot generation requires the plotting dependencies. "
+            "Install with `pip install -r requirements.txt`."
         ) from exc
 
     output_dir.mkdir(parents=True, exist_ok=True)

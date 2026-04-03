@@ -109,6 +109,11 @@ def solve_for_k(config: AppConfig, preprocess: PreprocessResult, k: int) -> Opti
                 "tier": int(tier_lookup[office_id]),
                 "avg_drive_minutes": float(preprocess.d_avg.loc[office_id, spare_id]),
                 "worst_case_drive_minutes": float(preprocess.d_max.loc[office_id, spare_id]),
+                "worst_case_one_way_drive_minutes": (
+                    float(preprocess.one_way_dmax.loc[office_id, spare_id])
+                    if preprocess.one_way_dmax is not None
+                    else float("nan")
+                ),
             }
         )
 

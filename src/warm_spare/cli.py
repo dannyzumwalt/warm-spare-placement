@@ -5,7 +5,9 @@ import sys
 
 from warm_spare.config import ConfigError, load_config, resolve_market_config
 from warm_spare.evaluate import evaluate_results
+from warm_spare.geocode import GeocodeError
 from warm_spare.io import ValidationError, load_and_validate_inputs
+from warm_spare.mapping import generate_recommendation_map
 from warm_spare.matrix_builder import ProviderError, build_matrix_dataset
 from warm_spare.optimize import solve_all_k
 from warm_spare.plotting import generate_plots
@@ -72,6 +74,20 @@ def build_parser() -> argparse.ArgumentParser:
             "review. Repeat the flag for multiple scenario IDs."
         ),
     )
+    parser.add_argument(
+        "--static-only",
+        action="store_true",
+        help=(
+            "For build-matrix, run only scenarios with departure_policy=none and skip realtime collection."
+        ),
+    )
+    parser.add_argument(
+        "--short-report",
+        action="store_true",
+        help=(
+            "For optimize/report/run, generate a shorter recommendation summary instead of the full narrative report."
+        ),
+    )
     return parser
 
 
@@ -88,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
                 market,
                 resolve_quarantine_from=args.resolve_quarantine_from,
                 accept_quarantined_scenarios=set(args.accept_quarantined_scenario),
+                static_only=bool(args.static_only),
             )
             print(result.output_dir)
             return 0 if result.success else 2
@@ -114,17 +131,38 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command in FULL_COMMANDS:
             optimization_results = solve_all_k(config, preprocess)
-            metrics = evaluate_results(preprocess, optimization_results, config.sla_minutes)
+            metrics = evaluate_results(
+                preprocess,
+                optimization_results,
+                config.sla_minutes,
+                config.effective_round_trip_sla_minutes(),
+            )
             recommendation = recommend_k(metrics, config.recommendation)
             write_optimization_outputs(output_dir, optimization_results)
             write_metrics(output_dir, metrics)
-            write_recommendation_report(output_dir, recommendation, metrics)
             if config.artifacts.generate_plots:
                 generate_plots(metrics, output_dir)
+            map_path, map_warnings = generate_recommendation_map(
+                config,
+                preprocess,
+                optimization_results,
+                recommendation,
+                output_dir,
+            )
+            write_recommendation_report(
+                output_dir,
+                recommendation,
+                metrics,
+                optimization_results,
+                preprocess,
+                short_report=bool(args.short_report),
+                map_path=map_path,
+                map_warnings=map_warnings,
+            )
 
         print(output_dir)
         return 0
-    except (ValidationError, ConfigError, ProviderError) as exc:
+    except (ValidationError, ConfigError, ProviderError, GeocodeError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     except Exception as exc:

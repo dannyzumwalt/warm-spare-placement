@@ -20,7 +20,12 @@ class EvaluateTests(unittest.TestCase):
             validation = load_and_validate_inputs(config)
             preprocess = preprocess_inputs(config, validation)
             results = solve_all_k(config, preprocess)
-            metrics = evaluate_results(preprocess, results, config.sla_minutes)
+            metrics = evaluate_results(
+                preprocess,
+                results,
+                config.sla_minutes,
+                config.effective_round_trip_sla_minutes(),
+            )
             expected = {"overall_worst_case_drive", "tier1_avg_drive", "site_overlap_with_prev_k"}
             self.assertTrue(expected.issubset(set(metrics.columns)))
 

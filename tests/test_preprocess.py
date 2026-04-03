@@ -19,6 +19,8 @@ class PreprocessTests(unittest.TestCase):
             preprocess = preprocess_inputs(config, validation)
             self.assertEqual(preprocess.d_avg.shape, (4, 3))
             self.assertEqual(preprocess.feasibility_mask.loc["D", "C"], 1)
+            self.assertIsNotNone(preprocess.one_way_dmax)
+            self.assertIn("min_one_way_dmax", preprocess.office_feasibility.columns)
             self.assertEqual(preprocess.candidate_order, ["A", "B", "C"])
 
 

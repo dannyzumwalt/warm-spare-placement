@@ -123,6 +123,10 @@ def load_offices_frame(path: Path, *, require_address: bool) -> pd.DataFrame:
 
 def hash_inputs(config: AppConfig) -> dict[str, str]:
     hashes = {"offices_csv": file_sha256(Path(config.paths.offices_csv))}
+    if config.paths.office_coordinates_csv:
+        coordinates_path = Path(config.paths.office_coordinates_csv)
+        if coordinates_path.exists():
+            hashes["office_coordinates_csv"] = file_sha256(coordinates_path)
     scenarios_dir = Path(config.paths.scenarios_dir)
     for scenario_name in config.scenario_names:
         round_trip_path, otc_path, cto_path = _resolve_scenario_paths(scenarios_dir, scenario_name)

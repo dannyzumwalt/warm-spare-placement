@@ -14,5 +14,6 @@ data/input/*
 data/input/scenarios/*
 !data/input/scenarios/.gitkeep
 .DS_Store
+.mplconfig/
 src/co_drive_time-master/
 src/co_drive_time-master.zip

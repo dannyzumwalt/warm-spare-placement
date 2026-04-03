@@ -17,12 +17,22 @@ def preprocess_inputs(config: AppConfig, validation: ValidationResult) -> Prepro
         validation.canonical_order,
         validation.candidate_order,
     )
-    feasibility_mask = (d_max <= config.sla_minutes).astype(int)
+    one_way_dmax = _directional_elementwise_max(
+        validation.directional_matrices,
+        validation.canonical_order,
+        validation.candidate_order,
+    )
+    round_trip_sla_minutes = config.effective_round_trip_sla_minutes()
+    feasibility_mask = (d_max <= round_trip_sla_minutes)
+    if one_way_dmax is not None:
+        feasibility_mask = feasibility_mask & (one_way_dmax <= config.sla_minutes)
+    feasibility_mask = feasibility_mask.astype(int)
 
     office_feasibility = _build_office_feasibility(
         offices=validation.offices,
         d_avg=d_avg,
         d_max=d_max,
+        one_way_dmax=one_way_dmax,
         feasibility_mask=feasibility_mask,
     )
 
@@ -33,6 +43,7 @@ def preprocess_inputs(config: AppConfig, validation: ValidationResult) -> Prepro
         directional_matrices=dict(validation.directional_matrices),
         d_avg=d_avg,
         d_max=d_max,
+        one_way_dmax=one_way_dmax,
         feasibility_mask=feasibility_mask,
         office_feasibility=office_feasibility,
         normalized_weights=dict(validation.normalized_weights),
@@ -73,11 +84,31 @@ def _elementwise_max(
     return max_series.unstack().loc[canonical_order, candidate_order]
 
 
+def _directional_elementwise_max(
+    directional_matrices: dict[str, dict[str, pd.DataFrame]],
+    canonical_order: list[str],
+    candidate_order: list[str],
+) -> pd.DataFrame | None:
+    directional_frames: list[pd.DataFrame] = []
+    for scenario_frames in directional_matrices.values():
+        for matrix in scenario_frames.values():
+            directional_frames.append(matrix.loc[canonical_order, candidate_order])
+    if not directional_frames:
+        return None
+    stacked = pd.concat(
+        [matrix.stack().rename(str(idx)) for idx, matrix in enumerate(directional_frames)],
+        axis=1,
+    )
+    max_series = stacked.max(axis=1)
+    return max_series.unstack().loc[canonical_order, candidate_order]
+
+
 def _build_office_feasibility(
     *,
     offices: pd.DataFrame,
     d_avg: pd.DataFrame,
     d_max: pd.DataFrame,
+    one_way_dmax: pd.DataFrame | None,
     feasibility_mask: pd.DataFrame,
 ) -> pd.DataFrame:
     rows = []
@@ -89,6 +120,9 @@ def _build_office_feasibility(
                 "office_id": office_id,
                 "tier": int(tier_lookup[office_id]),
                 "feasible_candidate_count": int(len(feasible_targets)),
+                "min_one_way_dmax": (
+                    float(one_way_dmax.loc[office_id].min()) if one_way_dmax is not None else float("nan")
+                ),
                 "min_dmax": float(d_max.loc[office_id].min()),
                 "min_davg": float(d_avg.loc[office_id].min()),
             }

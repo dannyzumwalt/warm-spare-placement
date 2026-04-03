@@ -6,7 +6,7 @@ paths:
 scenario_names:
   - static_average
 
-k_values: [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+k_values: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 sla_minutes: 120
 candidate_tiers: [1, 2, 3]
 

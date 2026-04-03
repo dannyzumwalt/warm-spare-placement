@@ -53,7 +53,16 @@ def load_config(config_path: str | Path) -> AppConfig:
 
     paths_raw = raw["paths"]
     _require_keys(paths_raw, ["offices_csv", "scenarios_dir", "output_root"], "paths")
-    paths = PathsConfig(**paths_raw)
+    paths = PathsConfig(
+        offices_csv=str(paths_raw["offices_csv"]),
+        scenarios_dir=str(paths_raw["scenarios_dir"]),
+        output_root=str(paths_raw["output_root"]),
+        office_coordinates_csv=(
+            str(paths_raw["office_coordinates_csv"])
+            if paths_raw.get("office_coordinates_csv") is not None
+            else None
+        ),
+    )
 
     solver = SolverConfig(**raw.get("solver", {}))
     recommendation = RecommendationConfig(**raw.get("recommendation", {}))
@@ -70,6 +79,11 @@ def load_config(config_path: str | Path) -> AppConfig:
         scenario_names=[str(value) for value in raw["scenario_names"]],
         k_values=[int(value) for value in raw["k_values"]],
         sla_minutes=float(raw["sla_minutes"]),
+        round_trip_sla_minutes=(
+            float(raw["round_trip_sla_minutes"])
+            if "round_trip_sla_minutes" in raw and raw["round_trip_sla_minutes"] is not None
+            else None
+        ),
         scenario_weight_profiles={
             str(name): {str(k): float(v) for k, v in weights.items()}
             for name, weights in raw["scenario_weight_profiles"].items()
@@ -127,6 +141,10 @@ def validate_config(config: AppConfig) -> None:
         raise ConfigError("k_values cannot be empty")
     if any(k <= 0 for k in config.k_values):
         raise ConfigError("k_values must be positive integers")
+    if config.sla_minutes <= 0:
+        raise ConfigError("sla_minutes must be positive")
+    if config.round_trip_sla_minutes is not None and config.round_trip_sla_minutes <= 0:
+        raise ConfigError("round_trip_sla_minutes must be positive when provided")
     if sorted(config.k_values) != config.k_values:
         raise ConfigError("k_values must be sorted ascending")
     if any(tier not in {1, 2, 3, 4} for tier in config.tier_weights):
@@ -169,6 +187,7 @@ def _load_matrix_builder(raw: dict[str, Any] | None) -> MatrixBuilderConfig | No
         provider=str(raw.get("provider", "google_distance_matrix")),
         api_key_env_var=str(raw.get("api_key_env_var", "GOOGLE_MAPS_API_KEY")),
         cache_db_path=str(raw.get("cache_db_path", "outputs/matrix_cache.sqlite")),
+        geocode_cache_db_path=str(raw.get("geocode_cache_db_path", "outputs/geocode_cache.sqlite")),
         eligible_spare_tiers=[int(value) for value in raw.get("eligible_spare_tiers", [1, 2, 3])],
         accepted_anomaly_scenarios=[str(value) for value in raw.get("accepted_anomaly_scenarios", [])],
         retry_policy=retry_policy,

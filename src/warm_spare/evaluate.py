@@ -11,7 +11,8 @@ from warm_spare.optimize import SOLVED_WITH_ASSIGNMENTS
 def evaluate_results(
     preprocess: PreprocessResult,
     optimization_results: list[OptimizationResult],
-    sla_minutes: float,
+    one_way_sla_minutes: float,
+    round_trip_sla_minutes: float,
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     previous_feasible_result: OptimizationResult | None = None
@@ -23,7 +24,8 @@ def evaluate_results(
             result,
             previous_feasible_result,
             seen_feasible_k,
-            sla_minutes,
+            one_way_sla_minutes,
+            round_trip_sla_minutes,
         )
         rows.append(row)
         if result.solver_status in SOLVED_WITH_ASSIGNMENTS and result.assignments is not None:
@@ -42,7 +44,8 @@ def _evaluate_single(
     result: OptimizationResult,
     previous_feasible_result: OptimizationResult | None,
     seen_feasible_k: int | None,
-    sla_minutes: float,
+    one_way_sla_minutes: float,
+    round_trip_sla_minutes: float,
 ) -> dict[str, object]:
     if result.assignments is None or result.solver_status not in SOLVED_WITH_ASSIGNMENTS:
         return {
@@ -72,7 +75,12 @@ def _evaluate_single(
     loads = assignments.groupby("assigned_spare").size()
     avg_by_tier = assignments.groupby("tier")["avg_drive_minutes"].mean().to_dict()
     worst_avg_by_tier = assignments.groupby("tier")["avg_drive_minutes"].max().to_dict()
-    sla_violations = int((assignments["worst_case_drive_minutes"] > float(sla_minutes)).sum())
+    round_trip_violations = assignments["worst_case_drive_minutes"] > float(round_trip_sla_minutes)
+    if "worst_case_one_way_drive_minutes" in assignments.columns:
+        one_way_violations = assignments["worst_case_one_way_drive_minutes"] > float(one_way_sla_minutes)
+    else:
+        one_way_violations = False
+    sla_violations = int((round_trip_violations | one_way_violations).sum())
 
     site_overlap = math.nan
     office_reassigned = math.nan

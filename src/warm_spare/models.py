@@ -13,6 +13,7 @@ class PathsConfig:
     offices_csv: str
     scenarios_dir: str
     output_root: str
+    office_coordinates_csv: str | None = None
 
 
 @dataclass(slots=True)
@@ -74,6 +75,7 @@ class MatrixBuilderConfig:
     provider: str = "google_distance_matrix"
     api_key_env_var: str = "GOOGLE_MAPS_API_KEY"
     cache_db_path: str = "outputs/matrix_cache.sqlite"
+    geocode_cache_db_path: str = "outputs/geocode_cache.sqlite"
     eligible_spare_tiers: list[int] = field(default_factory=lambda: [1, 2, 3])
     accepted_anomaly_scenarios: list[str] = field(default_factory=list)
     retry_policy: RetryPolicyConfig = field(default_factory=RetryPolicyConfig)
@@ -91,6 +93,7 @@ class AppConfig:
     scenario_weight_profiles: dict[str, dict[str, float]]
     active_scenario_profile: str
     tier_weights: dict[int, float]
+    round_trip_sla_minutes: float | None = None
     candidate_tiers: list[int] = field(default_factory=lambda: [1, 2, 3])
     solver: SolverConfig = field(default_factory=SolverConfig)
     recommendation: RecommendationConfig = field(default_factory=RecommendationConfig)
@@ -99,6 +102,11 @@ class AppConfig:
 
     def active_weights(self) -> dict[str, float]:
         return dict(self.scenario_weight_profiles[self.active_scenario_profile])
+
+    def effective_round_trip_sla_minutes(self) -> float:
+        if self.round_trip_sla_minutes is not None:
+            return float(self.round_trip_sla_minutes)
+        return float(self.sla_minutes) * 2.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -154,6 +162,7 @@ class PreprocessResult:
     directional_matrices: dict[str, dict[str, pd.DataFrame]]
     d_avg: pd.DataFrame
     d_max: pd.DataFrame
+    one_way_dmax: pd.DataFrame | None
     feasibility_mask: pd.DataFrame
     office_feasibility: pd.DataFrame
     normalized_weights: dict[str, float]
@@ -241,6 +250,7 @@ class DriveTimeElement:
 class MatrixBuildResult:
     output_dir: Path
     analysis_config_path: Path
+    office_coordinates_path: Path | None
     unresolved_pairs_path: Path | None
     quarantined_pairs_path: Path | None
     quarantine_manifest_path: Path | None

@@ -4,7 +4,7 @@ import unittest
 
 import pandas as pd
 
-from warm_spare.models import RecommendationConfig
+from warm_spare.models import RecommendationConfig, SpareInventoryConfig
 from warm_spare.recommend import recommend_k
 
 
@@ -56,6 +56,24 @@ class RecommendTests(unittest.TestCase):
         result = recommend_k(metrics, RecommendationConfig())
         self.assertTrue(any("Tier 2 local-anomaly guardrail" in note for note in result.notes))
         self.assertNotEqual(result.recommended_k, 4)
+
+    def test_candidate_site_window_limits_recommendation_scope(self) -> None:
+        metrics = pd.DataFrame(
+            [
+                {"k": 3, "solver_status": "OPTIMAL", "objective": 20020.0, "objective_improvement_pct_from_prev_k": 10.2, "tier1_avg_drive": 30.0, "tier1_improvement_pct_from_prev_k": 0.0, "tier2_avg_drive": 88.0, "overall_worst_case_drive": 151.0, "max_load_share": 0.79, "load_imbalance_ratio": 2.37},
+                {"k": 4, "solver_status": "OPTIMAL", "objective": 18320.0, "objective_improvement_pct_from_prev_k": 8.5, "tier1_avg_drive": 30.0, "tier1_improvement_pct_from_prev_k": 0.0, "tier2_avg_drive": 87.0, "overall_worst_case_drive": 143.0, "max_load_share": 0.66, "load_imbalance_ratio": 2.64},
+                {"k": 5, "solver_status": "OPTIMAL", "objective": 16950.0, "objective_improvement_pct_from_prev_k": 7.5, "tier1_avg_drive": 29.0, "tier1_improvement_pct_from_prev_k": 3.0, "tier2_avg_drive": 86.5, "overall_worst_case_drive": 142.0, "max_load_share": 0.54, "load_imbalance_ratio": 2.70},
+                {"k": 10, "solver_status": "OPTIMAL", "objective": 12117.2, "objective_improvement_pct_from_prev_k": 6.0, "tier1_avg_drive": 1.3, "tier1_improvement_pct_from_prev_k": 0.0, "tier2_avg_drive": 20.0, "overall_worst_case_drive": 103.58, "max_load_share": 0.21, "load_imbalance_ratio": 2.10},
+            ]
+        )
+        result = recommend_k(
+            metrics,
+            RecommendationConfig(),
+            SpareInventoryConfig(total_cabinets=8, candidate_site_counts=[3, 4, 5]),
+        )
+        self.assertEqual(result.recommended_k, 4)
+        self.assertEqual(result.chosen_rule, "objective_knee_fallback_no_admissible_solution")
+        self.assertTrue(any("candidate site counts" in note for note in result.notes))
 
 
 if __name__ == "__main__":

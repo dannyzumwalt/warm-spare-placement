@@ -137,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
                 config.sla_minutes,
                 config.effective_round_trip_sla_minutes(),
             )
-            recommendation = recommend_k(metrics, config.recommendation)
+            recommendation = recommend_k(metrics, config.recommendation, config.spare_inventory)
             write_optimization_outputs(output_dir, optimization_results)
             write_metrics(output_dir, metrics)
             if config.artifacts.generate_plots:

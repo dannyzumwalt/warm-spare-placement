@@ -40,6 +40,16 @@ class RecommendationConfig:
 
 
 @dataclass(slots=True)
+class SpareInventoryConfig:
+    total_cabinets: int | None = None
+    candidate_site_counts: list[int] = field(default_factory=list)
+    preferred_cabinet_distribution: dict[int, list[int]] = field(default_factory=dict)
+    min_cabinets_per_site: int = 1
+    max_cabinets_per_site: int | None = None
+    preferred_tier2_site_count: int | None = None
+
+
+@dataclass(slots=True)
 class ArtifactConfig:
     persist_preprocessed_csv: bool = True
     generate_plots: bool = True
@@ -105,6 +115,7 @@ class AppConfig:
     candidate_tiers: list[int] = field(default_factory=lambda: [1, 2, 3])
     solver: SolverConfig = field(default_factory=SolverConfig)
     recommendation: RecommendationConfig = field(default_factory=RecommendationConfig)
+    spare_inventory: SpareInventoryConfig = field(default_factory=SpareInventoryConfig)
     artifacts: ArtifactConfig = field(default_factory=ArtifactConfig)
     matrix_builder: MatrixBuilderConfig | None = None
     market_id: str | None = None

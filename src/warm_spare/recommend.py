@@ -4,13 +4,17 @@ import math
 
 import pandas as pd
 
-from warm_spare.models import RecommendationConfig, RecommendationResult
+from warm_spare.models import RecommendationConfig, RecommendationResult, SpareInventoryConfig
 
 
 FEASIBLE_STATUSES = {"OPTIMAL", "FEASIBLE", "TIME_LIMIT_WITH_INCUMBENT"}
 
 
-def recommend_k(metrics: pd.DataFrame, config: RecommendationConfig) -> RecommendationResult:
+def recommend_k(
+    metrics: pd.DataFrame,
+    config: RecommendationConfig,
+    spare_inventory: SpareInventoryConfig | None = None,
+) -> RecommendationResult:
     feasible = metrics.loc[metrics["solver_status"].isin(FEASIBLE_STATUSES)].sort_values("k").reset_index(drop=True)
     notes: list[str] = []
     if feasible.empty:
@@ -20,6 +24,22 @@ def recommend_k(metrics: pd.DataFrame, config: RecommendationConfig) -> Recommen
             alternatives=[],
             notes=["No feasible solutions were available for recommendation."],
         )
+
+    spare_inventory = spare_inventory or SpareInventoryConfig()
+    if spare_inventory.candidate_site_counts:
+        feasible = feasible.loc[feasible["k"].isin(spare_inventory.candidate_site_counts)].reset_index(drop=True)
+        notes.append(
+            "Recommendation review was limited to configured candidate site counts: "
+            + ", ".join(f"k={value}" for value in spare_inventory.candidate_site_counts)
+            + "."
+        )
+        if feasible.empty:
+            return RecommendationResult(
+                recommended_k=None,
+                chosen_rule="no_feasible_solution_in_candidate_site_counts",
+                alternatives=[],
+                notes=notes + ["No feasible solutions were available inside the configured candidate site-count window."],
+            )
 
     blocked_ks = _blocked_by_tier2_guardrail(feasible, float(config.tier2_guardrail_pct))
     screened = feasible.loc[~feasible["k"].isin(blocked_ks)].reset_index(drop=True)

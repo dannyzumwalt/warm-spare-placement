@@ -17,6 +17,7 @@ from warm_spare.models import (
     RetryPolicyConfig,
     ScenarioDefinition,
     SolverConfig,
+    SpareInventoryConfig,
 )
 
 
@@ -66,6 +67,7 @@ def load_config(config_path: str | Path) -> AppConfig:
 
     solver = SolverConfig(**raw.get("solver", {}))
     recommendation = RecommendationConfig(**raw.get("recommendation", {}))
+    spare_inventory = _load_spare_inventory(raw.get("spare_inventory"))
     artifacts = ArtifactConfig(**raw.get("artifacts", {}))
     candidate_tiers = [int(value) for value in raw.get("candidate_tiers", [1, 2, 3])]
     tier_weights = {int(key): float(value) for key, value in raw["tier_weights"].items()}
@@ -93,6 +95,7 @@ def load_config(config_path: str | Path) -> AppConfig:
         candidate_tiers=candidate_tiers,
         solver=solver,
         recommendation=recommendation,
+        spare_inventory=spare_inventory,
         artifacts=artifacts,
         matrix_builder=matrix_builder,
         market_id=str(raw["market_id"]) if raw.get("market_id") is not None else None,
@@ -161,6 +164,56 @@ def validate_config(config: AppConfig) -> None:
         raise ConfigError("max_defensible_load_imbalance_ratio must be positive")
     if config.recommendation.min_signals_to_add_site <= 0:
         raise ConfigError("min_signals_to_add_site must be positive")
+    if config.spare_inventory.total_cabinets is not None and config.spare_inventory.total_cabinets <= 0:
+        raise ConfigError("spare_inventory.total_cabinets must be positive when provided")
+    if config.spare_inventory.min_cabinets_per_site <= 0:
+        raise ConfigError("spare_inventory.min_cabinets_per_site must be positive")
+    if (
+        config.spare_inventory.max_cabinets_per_site is not None
+        and config.spare_inventory.max_cabinets_per_site < config.spare_inventory.min_cabinets_per_site
+    ):
+        raise ConfigError("spare_inventory.max_cabinets_per_site must be >= min_cabinets_per_site")
+    if config.spare_inventory.preferred_tier2_site_count is not None and config.spare_inventory.preferred_tier2_site_count < 0:
+        raise ConfigError("spare_inventory.preferred_tier2_site_count cannot be negative")
+    if any(value <= 0 for value in config.spare_inventory.candidate_site_counts):
+        raise ConfigError("spare_inventory.candidate_site_counts must contain positive integers")
+    if any(value not in config.k_values for value in config.spare_inventory.candidate_site_counts):
+        raise ConfigError("spare_inventory.candidate_site_counts must be a subset of k_values")
+    if sorted(config.spare_inventory.candidate_site_counts) != config.spare_inventory.candidate_site_counts:
+        raise ConfigError("spare_inventory.candidate_site_counts must be sorted ascending")
+    for site_count, distribution in config.spare_inventory.preferred_cabinet_distribution.items():
+        if site_count <= 0:
+            raise ConfigError("spare_inventory.preferred_cabinet_distribution keys must be positive")
+        if site_count not in config.k_values:
+            raise ConfigError("spare_inventory.preferred_cabinet_distribution keys must be in k_values")
+        if len(distribution) != site_count:
+            raise ConfigError(
+                "spare_inventory.preferred_cabinet_distribution entries must have one value per selected site"
+            )
+        if any(value < config.spare_inventory.min_cabinets_per_site for value in distribution):
+            raise ConfigError(
+                "spare_inventory.preferred_cabinet_distribution cannot assign fewer than min_cabinets_per_site"
+            )
+        if (
+            config.spare_inventory.max_cabinets_per_site is not None
+            and any(value > config.spare_inventory.max_cabinets_per_site for value in distribution)
+        ):
+            raise ConfigError(
+                "spare_inventory.preferred_cabinet_distribution cannot exceed max_cabinets_per_site"
+            )
+        if (
+            config.spare_inventory.total_cabinets is not None
+            and sum(distribution) != config.spare_inventory.total_cabinets
+        ):
+            raise ConfigError(
+                "spare_inventory.preferred_cabinet_distribution must sum to spare_inventory.total_cabinets"
+            )
+    if config.spare_inventory.total_cabinets is not None:
+        max_sites = config.spare_inventory.total_cabinets // config.spare_inventory.min_cabinets_per_site
+        if any(site_count > max_sites for site_count in config.spare_inventory.candidate_site_counts):
+            raise ConfigError(
+                "spare_inventory.candidate_site_counts cannot require more sites than total_cabinets allows"
+            )
 
     active_weights = config.active_weights()
     missing = [name for name in config.scenario_names if name not in active_weights]
@@ -204,4 +257,33 @@ def _load_matrix_builder(raw: dict[str, Any] | None) -> MatrixBuilderConfig | No
         batch_limits=batch_limits,
         anomaly=anomaly,
         scenarios=scenarios,
+    )
+
+
+def _load_spare_inventory(raw: dict[str, Any] | None) -> SpareInventoryConfig:
+    if raw is None:
+        return SpareInventoryConfig()
+    preferred_distribution = {
+        int(site_count): [int(value) for value in distribution]
+        for site_count, distribution in raw.get("preferred_cabinet_distribution", {}).items()
+    }
+    return SpareInventoryConfig(
+        total_cabinets=(
+            int(raw["total_cabinets"])
+            if raw.get("total_cabinets") is not None
+            else None
+        ),
+        candidate_site_counts=[int(value) for value in raw.get("candidate_site_counts", [])],
+        preferred_cabinet_distribution=preferred_distribution,
+        min_cabinets_per_site=int(raw.get("min_cabinets_per_site", 1)),
+        max_cabinets_per_site=(
+            int(raw["max_cabinets_per_site"])
+            if raw.get("max_cabinets_per_site") is not None
+            else None
+        ),
+        preferred_tier2_site_count=(
+            int(raw["preferred_tier2_site_count"])
+            if raw.get("preferred_tier2_site_count") is not None
+            else None
+        ),
     )

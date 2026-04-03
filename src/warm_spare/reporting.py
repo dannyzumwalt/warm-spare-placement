@@ -19,6 +19,7 @@ from warm_spare.models import (
     PreprocessResult,
     RecommendationResult,
     RunMetadata,
+    SpareInventoryConfig,
     SpareSiteMapDetail,
     ValidationResult,
 )
@@ -185,6 +186,7 @@ def write_recommendation_report(
             selected_result,
             preprocess,
             results_by_k,
+            _load_spare_inventory_from_output(output_dir),
         )
         recommended_sites_table.to_csv(output_dir / "recommended_selected_sites.csv", index=False)
 
@@ -470,6 +472,7 @@ def _full_recommendation_content(
     map_warnings: list[str],
 ) -> str:
     market_display_name = _market_display_name(preprocess, output_dir)
+    spare_inventory = _load_spare_inventory_from_output(output_dir)
     if selected_row is None or selected_result is None or selected_result.assignments is None:
         return _short_recommendation_content(
             recommendation,
@@ -488,6 +491,7 @@ def _full_recommendation_content(
         f"- Worst typical assigned round trip: `{_fmt_float(selected_row['overall_worst_avg_drive'])}` minutes",
         f"- SLA violations: `{int(selected_row['sla_violations'])}`",
     ]
+    summary_bullets.extend(_inventory_summary_lines(spare_inventory, selected_site_table))
     decision_request = (
         "Approve the recommended warm spare site set for planning review and field validation."
     )
@@ -499,6 +503,9 @@ def _full_recommendation_content(
         *_why_not_neighbor_lines(selected_row, higher_neighbor, recommendation, lower=False),
     ]
     notes = [f"- {note}" for note in recommendation.notes] or ["- None"]
+    tier2_target_note = _tier2_preference_note(spare_inventory, selected_site_table)
+    if tier2_target_note is not None:
+        notes.append(f"- {tier2_target_note}")
     if map_warnings:
         notes.extend(f"- {warning}" for warning in map_warnings)
     assignments_path = output_dir / f"assignments_k_{selected_k}.csv"
@@ -548,6 +555,7 @@ def _full_recommendation_content(
             f"- Maximum load share on any spare: `{_fmt_float(float(selected_row['max_load_share']) * 100.0)}%`",
             f"- Load imbalance ratio: `{_fmt_float(selected_row['load_imbalance_ratio'])}x`",
             f"- Offices reassigned from `k={selected_k - 1}` to `k={selected_k}`: `{_fmt_float(selected_row['offices_reassigned_from_prev_k'])}`",
+            *_operational_inventory_lines(spare_inventory, selected_site_table),
             "",
             *methodology_lines,
             "",
@@ -563,6 +571,7 @@ def _build_selected_site_table(
     result: OptimizationResult,
     preprocess: PreprocessResult,
     results_by_k: dict[int, OptimizationResult],
+    spare_inventory: SpareInventoryConfig,
 ) -> pd.DataFrame:
     assignments = result.assignments.copy()
     offices = preprocess.offices.set_index("office_id")
@@ -578,13 +587,18 @@ def _build_selected_site_table(
                 "selected_site": site,
                 "site_tier": site_tier,
                 "load_count": int(len(site_assignments)),
+                "load_share_pct": round((float(len(site_assignments)) / float(len(assignments))) * 100.0, 2),
                 "avg_assigned_round_trip_minutes": round(float(site_assignments["avg_drive_minutes"].mean()), 2),
                 "max_assigned_round_trip_minutes": round(float(site_assignments["worst_case_drive_minutes"].max()), 2),
                 "persists_in_k_plus_1": site in next_one_sites,
                 "persists_in_k_plus_2": site in next_two_sites,
             }
         )
-    return pd.DataFrame(rows)
+    table = pd.DataFrame(rows)
+    allocations = _allocate_provisional_cabinets(table, result.k, spare_inventory)
+    if allocations:
+        table["provisional_cabinets"] = table["selected_site"].map(allocations).astype(int)
+    return table
 
 
 def _metric_row_for_k(metrics: pd.DataFrame, k: int | None) -> pd.Series | None:
@@ -769,6 +783,7 @@ def _methodology_section_lines(
     recommendation: RecommendationResult,
 ) -> list[str]:
     resolved = _load_resolved_config(output_dir)
+    spare_inventory = _load_spare_inventory_from_output(output_dir)
     scenario_names = resolved.get("scenario_names") if isinstance(resolved.get("scenario_names"), list) else []
     active_profile = resolved.get("active_scenario_profile")
     candidate_tiers = resolved.get("candidate_tiers") if isinstance(resolved.get("candidate_tiers"), list) else []
@@ -792,6 +807,8 @@ def _methodology_section_lines(
         "",
         "### What was optimized",
         "The solver tested each site count in the configured range and found the best placement for that exact number of warm spare sites. For this run, the recommendation layer then compared those optimal per-`k` solutions and chose a defensible stopping point rather than simply selecting the largest footprint.",
+        "",
+        *_inventory_methodology_lines(spare_inventory),
         "",
         "The optimization model is a weighted p-median formulation, which is the discrete optimization form of a k-medoids problem. In plain terms, it chooses real offices as warm spare locations and assigns every office to one selected spare site while minimizing weighted travel burden.",
         "",
@@ -835,7 +852,7 @@ def _methodology_section_lines(
         "",
         "### What this analysis does not yet model",
         "- The current optimization is still uncapacitated, so load balance is enforced in the recommendation layer rather than directly in the solver objective.",
-        "- It does not model cabinet capacity or multi-spare capacity at a single site.",
+        "- Cabinet allocation is still a planning-layer heuristic. It does not yet optimize against per-office hardware counts or explicit site capacities.",
         "- The quality of the recommendation still depends on clean tier assignments, address quality, and representative travel-time scenarios.",
     ]
 
@@ -874,6 +891,30 @@ def _load_resolved_config(output_dir: Path) -> dict[str, object]:
     return resolved_config if isinstance(resolved_config, dict) else {}
 
 
+def _load_spare_inventory_from_output(output_dir: Path) -> SpareInventoryConfig:
+    resolved = _load_resolved_config(output_dir)
+    raw = resolved.get("spare_inventory")
+    if not isinstance(raw, dict):
+        return SpareInventoryConfig()
+    preferred_distribution = {
+        int(site_count): [int(value) for value in distribution]
+        for site_count, distribution in raw.get("preferred_cabinet_distribution", {}).items()
+        if isinstance(distribution, list)
+    }
+    return SpareInventoryConfig(
+        total_cabinets=int(raw["total_cabinets"]) if raw.get("total_cabinets") is not None else None,
+        candidate_site_counts=[int(value) for value in raw.get("candidate_site_counts", [])],
+        preferred_cabinet_distribution=preferred_distribution,
+        min_cabinets_per_site=int(raw.get("min_cabinets_per_site", 1)),
+        max_cabinets_per_site=int(raw["max_cabinets_per_site"]) if raw.get("max_cabinets_per_site") is not None else None,
+        preferred_tier2_site_count=(
+            int(raw["preferred_tier2_site_count"])
+            if raw.get("preferred_tier2_site_count") is not None
+            else None
+        ),
+    )
+
+
 def _infer_market_id_from_config(resolved_config: dict[str, object]) -> str | None:
     paths = resolved_config.get("paths")
     if not isinstance(paths, dict):
@@ -907,6 +948,127 @@ def _market_label_from_market_id(market_id: str) -> str | None:
         return None
     label = raw.get("label")
     return str(label) if label else None
+
+
+def _inventory_summary_lines(
+    spare_inventory: SpareInventoryConfig,
+    selected_site_table: pd.DataFrame | None,
+) -> list[str]:
+    lines: list[str] = []
+    if spare_inventory.total_cabinets is not None:
+        lines.append(f"- Planned spare cabinets in market: `{spare_inventory.total_cabinets}`")
+    if spare_inventory.candidate_site_counts:
+        lines.append(
+            "- Recommendation site-count window: "
+            + ", ".join(f"`k={value}`" for value in spare_inventory.candidate_site_counts)
+        )
+    if selected_site_table is not None and "provisional_cabinets" in selected_site_table.columns:
+        lines.append(
+            "- Provisional cabinet split across selected sites: "
+            + ", ".join(
+                f"`{row.selected_site}` x `{int(row.provisional_cabinets)}`"
+                for row in selected_site_table.itertuples(index=False)
+            )
+        )
+    return lines
+
+
+def _operational_inventory_lines(
+    spare_inventory: SpareInventoryConfig,
+    selected_site_table: pd.DataFrame | None,
+) -> list[str]:
+    if selected_site_table is None or "provisional_cabinets" not in selected_site_table.columns:
+        return []
+    allocation_basis = (
+        "preferred distribution"
+        if len(spare_inventory.preferred_cabinet_distribution.get(len(selected_site_table), [])) == len(selected_site_table)
+        else "provisional load-based distribution"
+    )
+    lines = [
+        f"- Provisional cabinet allocation basis: `{allocation_basis}`",
+        f"- Total provisional cabinets assigned: `{int(selected_site_table['provisional_cabinets'].sum())}`",
+    ]
+    if spare_inventory.preferred_tier2_site_count is not None:
+        actual_tier2 = int((selected_site_table["site_tier"] == 2).sum())
+        lines.append(
+            f"- Tier 2 spare sites in recommended set: `{actual_tier2}` (target `{spare_inventory.preferred_tier2_site_count}`)"
+        )
+    return lines
+
+
+def _inventory_methodology_lines(spare_inventory: SpareInventoryConfig) -> list[str]:
+    if spare_inventory.total_cabinets is None and not spare_inventory.candidate_site_counts:
+        return []
+    lines = ["This run also used a fixed spare-inventory planning layer on top of the site-location sweep."]
+    if spare_inventory.total_cabinets is not None:
+        lines.append(f"- total spare cabinets planned in market: `{spare_inventory.total_cabinets}`")
+    if spare_inventory.candidate_site_counts:
+        lines.append(
+            "- recommendation review limited to site counts: "
+            + ", ".join(f"`k={value}`" for value in spare_inventory.candidate_site_counts)
+        )
+    if spare_inventory.preferred_cabinet_distribution:
+        patterns = ", ".join(
+            f"`k={site_count}` -> {distribution}"
+            for site_count, distribution in sorted(spare_inventory.preferred_cabinet_distribution.items())
+        )
+        lines.append(f"- preferred cabinet patterns by site count: {patterns}")
+    if spare_inventory.preferred_tier2_site_count is not None:
+        lines.append(f"- preferred Tier 2 spare site count: `{spare_inventory.preferred_tier2_site_count}`")
+    return lines
+
+
+def _tier2_preference_note(
+    spare_inventory: SpareInventoryConfig,
+    selected_site_table: pd.DataFrame | None,
+) -> str | None:
+    if spare_inventory.preferred_tier2_site_count is None or selected_site_table is None:
+        return None
+    actual_tier2 = int((selected_site_table["site_tier"] == 2).sum())
+    if actual_tier2 >= spare_inventory.preferred_tier2_site_count:
+        return f"The recommended set meets the Tier 2 site preference with {actual_tier2} Tier 2 spare sites."
+    return (
+        f"The recommended set includes {actual_tier2} Tier 2 spare sites versus the preferred "
+        f"{spare_inventory.preferred_tier2_site_count}; treat tier mix as a review item."
+    )
+
+
+def _allocate_provisional_cabinets(
+    selected_site_table: pd.DataFrame,
+    selected_k: int,
+    spare_inventory: SpareInventoryConfig,
+) -> dict[str, int]:
+    if selected_site_table.empty or spare_inventory.total_cabinets is None:
+        return {}
+
+    ordered_sites = selected_site_table.sort_values(
+        ["load_count", "avg_assigned_round_trip_minutes", "selected_site"],
+        ascending=[False, False, True],
+    )["selected_site"].tolist()
+    preferred_distribution = spare_inventory.preferred_cabinet_distribution.get(selected_k)
+    if preferred_distribution:
+        sorted_distribution = sorted(preferred_distribution, reverse=True)
+        return {site: cabinets for site, cabinets in zip(ordered_sites, sorted_distribution, strict=False)}
+
+    allocations = {site: int(spare_inventory.min_cabinets_per_site) for site in ordered_sites}
+    remaining = int(spare_inventory.total_cabinets) - len(ordered_sites) * int(spare_inventory.min_cabinets_per_site)
+    if remaining <= 0:
+        return allocations
+
+    load_counts = selected_site_table.set_index("selected_site")["load_count"].to_dict()
+    while remaining > 0:
+        candidates = []
+        for site in ordered_sites:
+            if spare_inventory.max_cabinets_per_site is not None and allocations[site] >= spare_inventory.max_cabinets_per_site:
+                continue
+            score = load_counts.get(site, 0) / max(1, allocations[site])
+            candidates.append((score, load_counts.get(site, 0), site))
+        if not candidates:
+            break
+        _, _, selected_site = max(candidates)
+        allocations[selected_site] += 1
+        remaining -= 1
+    return allocations
 
 
 def _markdown_table(frame) -> str:

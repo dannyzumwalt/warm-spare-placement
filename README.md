@@ -228,6 +228,41 @@ Default V2 planning defaults in `config/default.yaml` are now:
 
 Tune the `recommendation:` block in the config if a market needs stricter or looser defensibility thresholds.
 
+## Fixed spare inventory planning
+
+If a market has a fixed number of spare cabinets determined outside the model, keep the full `k_values` sweep for diagnostics and add an optional `spare_inventory:` block to limit recommendation review to the site-count window you actually want to compare.
+
+Supported fields:
+
+- `total_cabinets`: total spare cabinets planned in the market
+- `candidate_site_counts`: site counts the recommendation layer is allowed to choose from
+- `preferred_cabinet_distribution`: preferred cabinet split for each allowed site count
+- `min_cabinets_per_site`: minimum cabinets allowed at any selected spare site
+- `max_cabinets_per_site`: optional maximum cabinets allowed at any selected spare site
+- `preferred_tier2_site_count`: optional planning target for how many selected spare sites should be Tier 2
+
+Example:
+
+```yaml
+spare_inventory:
+  total_cabinets: 8
+  candidate_site_counts: [3, 4, 5]
+  preferred_cabinet_distribution:
+    3: [3, 3, 2]
+    4: [2, 2, 2, 2]
+    5: [2, 2, 2, 1, 1]
+  min_cabinets_per_site: 1
+  max_cabinets_per_site: 3
+  preferred_tier2_site_count: 2
+```
+
+Current behavior:
+
+- optimization still solves the best location set for each tested `k`
+- recommendation can be restricted to the configured site-count window
+- reports include a provisional cabinet allocation for the recommended site set
+- provisional cabinet allocation is still heuristic and does not yet use per-office hardware counts
+
 ## Validation and reporting outputs
 
 Depending on mode, run directories may include:
